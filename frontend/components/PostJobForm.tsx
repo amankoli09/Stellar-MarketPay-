@@ -7,11 +7,13 @@ import { createJob } from "@/lib/api";
 import { JOB_CATEGORIES } from "@/utils/format";
 import { useRouter } from "next/router";
 import clsx from "clsx";
+import { useToast } from "@/components/Toast";
 
 interface PostJobFormProps { publicKey: string; }
 
 export default function PostJobForm({ publicKey }: PostJobFormProps) {
   const router = useRouter();
+  const toast = useToast();
   const [form, setForm] = useState({
     title: "", description: "", budget: "", category: "", skillInput: "", deadline: "",
   });
@@ -51,9 +53,10 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
         deadline: form.deadline || undefined,
         clientAddress: publicKey,
       });
+      toast.success("Job posted! Budget locked in escrow.");
       router.push(`/jobs/${job.id}`);
     } catch (err) {
-      setError("Failed to post job. Please try again.");
+      toast.error("Failed to post job. Please try again.");
       setLoading(false);
     }
   };
@@ -148,5 +151,5 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
 }
 
 function Spinner() {
-  return <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>;
+  return <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>;
 }

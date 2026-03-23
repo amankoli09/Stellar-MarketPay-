@@ -6,6 +6,7 @@ import { useState } from "react";
 import { submitApplication } from "@/lib/api";
 import type { Job } from "@/utils/types";
 import { formatXLM } from "@/utils/format";
+import { useToast } from "./Toast";
 
 interface ApplicationFormProps {
   job: Job;
@@ -15,6 +16,7 @@ interface ApplicationFormProps {
 
 export default function ApplicationForm({ job, publicKey, onSuccess }: ApplicationFormProps) {
   const [proposal, setProposal] = useState("");
+    const toast = useToast();
   const [bidAmount, setBidAmount] = useState(job.budget);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,9 +34,10 @@ export default function ApplicationForm({ job, publicKey, onSuccess }: Applicati
         proposal: proposal.trim(),
         bidAmount: parseFloat(bidAmount).toFixed(7),
       });
+      toast.success("Proposal submitted successfully!");
       onSuccess();
     } catch {
-      setError("Failed to submit application. Please try again.");
+       toast.error("Failed to submit application. Please try again.");
       setLoading(false);
     }
   };

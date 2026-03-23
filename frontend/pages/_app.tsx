@@ -4,6 +4,7 @@ import Head from "next/head";
 import Navbar from "@/components/Navbar";
 import { connectWallet, getConnectedPublicKey } from "@/lib/wallet";
 import "@/styles/globals.css";
+import { ToastProvider } from "@/components/Toast";
 
 export default function App({ Component, pageProps }: AppProps) {
   const [publicKey, setPublicKey] = useState<string | null>(null);
@@ -19,17 +20,19 @@ export default function App({ Component, pageProps }: AppProps) {
 
   return (
     <>
-      <Head>
-        <title>Stellar MarketPay — Decentralised Freelance Marketplace</title>
-        <meta name="description" content="Post jobs, hire freelancers, and pay with XLM — secured by Soroban smart contracts." />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-      </Head>
-      <div className="min-h-screen bg-ink-900 bg-lines">
-        <Navbar publicKey={publicKey} onConnect={handleConnect} onDisconnect={() => setPublicKey(null)} />
-        <main>
-          <Component {...pageProps} publicKey={publicKey} onConnect={handleConnect} />
-        </main>
-      </div>
+      <ToastProvider>
+        <Head>
+          <title>Stellar MarketPay — Decentralised Freelance Marketplace</title>
+          <meta name="description" content="Post jobs, hire freelancers, and pay with XLM — secured by Soroban smart contracts." />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+        </Head>
+        <div className="min-h-screen bg-ink-900 bg-lines">
+          <Navbar publicKey={publicKey} onConnect={handleConnect} onDisconnect={() => setPublicKey(null)} />
+          <main>
+            <Component {...pageProps} publicKey={publicKey} onConnect={handleConnect} />
+          </main>
+        </div>
+      </ToastProvider>
     </>
   );
 }
