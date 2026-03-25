@@ -35,3 +35,31 @@ services:
       - ./backend:/app
       - /app/node_modules
     command: npm run dev
+
+    
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     stellarwork
+      POSTGRES_PASSWORD: stellarwork_dev
+      POSTGRES_DB:       stellarwork
+    ports:
+      - "5432:5432"         # expose for local tooling (TablePlus, psql, etc.)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stellarwork -d stellarwork"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+
+
+
+ 
+volumes:
+  postgres_data:   # named volume — survives container restarts
+
+
+  

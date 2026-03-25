@@ -4,7 +4,7 @@
  */
 import { useState } from "react";
 import { createJob } from "@/lib/api";
-import { JOB_CATEGORIES } from "@/utils/format";
+import { JOB_CATEGORIES, SKILL_SUGGESTIONS } from "@/utils/format";
 import { useRouter } from "next/router";
 import clsx from "clsx";
 import { useToast } from "@/components/Toast";
@@ -20,14 +20,25 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
   const [skills, setSkills] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
 
   const set = (key: string, val: string) => setForm((f) => ({ ...f, [key]: val }));
 
-  const addSkill = () => {
-    const s = form.skillInput.trim();
+  // Filter suggestions based on input
+  const filteredSuggestions = form.skillInput.trim().length > 0
+    ? SKILL_SUGGESTIONS.filter(
+        (s) => s.toLowerCase().includes(form.skillInput.toLowerCase()) && !skills.includes(s)
+      ).slice(0, 5)
+    : [];
+
+  const addSkill = (skill?: string) => {
+    const s = (skill || form.skillInput).trim();
     if (s && !skills.includes(s) && skills.length < 8) {
       setSkills([...skills, s]);
       set("skillInput", "");
+      setShowSuggestions(false);
+      setSelectedSuggestionIndex(0);
     }
   };
 
@@ -163,14 +174,64 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
         </div>
 
         {/* Skills */}
-        <div>
+        <div className="relative">
           <label className="label">Required Skills</label>
           <div className="flex gap-2">
-            <input type="text" value={form.skillInput} onChange={(e) => set("skillInput", e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addSkill())}
-              placeholder="Type a skill and press Enter"
-              className="input-field flex-1" />
-            <button onClick={addSkill} type="button" className="btn-secondary px-4 py-3 text-sm">Add</button>
+            <div className="relative flex-1">
+              <input 
+                type="text" 
+                value={form.skillInput} 
+                onChange={(e) => {
+                  set("skillInput", e.target.value);
+                  setShowSuggestions(e.target.value.trim().length > 0);
+                  setSelectedSuggestionIndex(0);
+                }}
+                onFocus={() => setShowSuggestions(form.skillInput.trim().length > 0)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (showSuggestions && filteredSuggestions.length > 0) {
+                      addSkill(filteredSuggestions[selectedSuggestionIndex]);
+                    } else {
+                      addSkill();
+                    }
+                  } else if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setSelectedSuggestionIndex((prev) => 
+                      prev < filteredSuggestions.length - 1 ? prev + 1 : prev
+                    );
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setSelectedSuggestionIndex((prev) => prev > 0 ? prev - 1 : 0);
+                  } else if (e.key === "Escape") {
+                    setShowSuggestions(false);
+                  }
+                }}
+                placeholder="Type a skill and press Enter"
+                className="input-field w-full" />
+              {/* Suggestions Dropdown */}
+              {showSuggestions && filteredSuggestions.length > 0 && (
+                <div className="absolute z-10 w-full mt-1 bg-market-900 border border-market-500/20 rounded-lg shadow-lg overflow-hidden">
+                  {filteredSuggestions.map((suggestion, index) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => addSkill(suggestion)}
+                      className={clsx(
+                        "w-full text-left px-3 py-2 text-sm transition-colors",
+                        index === selectedSuggestionIndex 
+                          ? "bg-market-500/20 text-market-400" 
+                          : "text-amber-100 hover:bg-market-500/10"
+                      )}
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button onClick={() => addSkill()} type="button" className="btn-secondary px-4 py-3 text-sm">Add</button>
           </div>
           {skills.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-3">

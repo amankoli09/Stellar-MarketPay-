@@ -55,6 +55,30 @@ export const JOB_CATEGORIES = [
 ];
 
 /**
+ * Common Web3 and development skill suggestions for autocomplete.
+ */
+export const SKILL_SUGGESTIONS = [
+  // Blockchain & Smart Contracts
+  "Rust", "Soroban", "Stellar SDK", "Solidity", "Ethereum", "Smart Contracts",
+  "Web3.js", "Ethers.js", "Hardhat", "Foundry", "Anchor", "Solana",
+  "DeFi", "NFT", "Token Development", "Cryptography",
+  // Frontend
+  "React", "Next.js", "TypeScript", "JavaScript", "Vue.js", "Angular",
+  "Tailwind CSS", "CSS", "HTML", "Redux", "Zustand", "React Query",
+  // Backend
+  "Node.js", "Express", "Python", "Go", "Rust", "PostgreSQL", "MongoDB",
+  "GraphQL", "REST API", "Docker", "Kubernetes", "Redis", "AWS", "GCP",
+  // Design
+  "Figma", "UI Design", "UX Design", "Prototyping", "Wireframing",
+  // DevOps & Security
+  "CI/CD", "Linux", "Security Audit", "Penetration Testing", "DevOps",
+  // Mobile
+  "React Native", "Flutter", "iOS", "Android",
+  // Other
+  "Technical Writing", "Documentation", "Agile", "Scrum", "Git",
+];
+
+/**
  * Converts an XLM amount to a USD equivalent string.
  * Returns null if price is unavailable so callers can fail silently.
  */

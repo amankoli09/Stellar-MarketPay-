@@ -1,0 +1,72 @@
+-- Idempotent schema.  Run via migrate.js on every startup.
+
+-- ─────────────────────────────────────────
+-- profiles
+-- ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS profiles (
+  public_key        TEXT PRIMARY KEY,            -- Stellar G... address
+  display_name      TEXT,
+  bio               TEXT,
+  skills            TEXT[]    NOT NULL DEFAULT '{}',
+  role              TEXT      NOT NULL DEFAULT 'both',
+  completed_jobs    INTEGER   NOT NULL DEFAULT 0,
+  total_earned_xlm  NUMERIC(20,7) NOT NULL DEFAULT 0,
+  rating            NUMERIC(3,2),                -- NULL until first rating
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────
+-- jobs
+-- ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS jobs (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title               TEXT        NOT NULL,
+  description         TEXT        NOT NULL,
+  budget              NUMERIC(20,7) NOT NULL,
+  category            TEXT        NOT NULL,
+  skills              TEXT[]      NOT NULL DEFAULT '{}',
+  status              TEXT        NOT NULL DEFAULT 'open',
+  client_address      TEXT        NOT NULL REFERENCES profiles(public_key),
+  freelancer_address  TEXT        REFERENCES profiles(public_key),
+  escrow_contract_id  TEXT,
+  applicant_count     INTEGER     NOT NULL DEFAULT 0,
+  deadline            TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS jobs_status_idx          ON jobs(status);
+CREATE INDEX IF NOT EXISTS jobs_category_idx        ON jobs(category);
+CREATE INDEX IF NOT EXISTS jobs_client_address_idx  ON jobs(client_address);
+CREATE INDEX IF NOT EXISTS jobs_created_at_idx      ON jobs(created_at DESC);
+
+-- ─────────────────────────────────────────
+-- applications
+-- ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS applications (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  job_id              UUID        NOT NULL REFERENCES jobs(id),
+  freelancer_address  TEXT        NOT NULL REFERENCES profiles(public_key),
+  proposal            TEXT        NOT NULL,
+  bid_amount          NUMERIC(20,7) NOT NULL,
+  status              TEXT        NOT NULL DEFAULT 'pending',
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (job_id, freelancer_address)              -- prevent duplicate applications
+);
+
+CREATE INDEX IF NOT EXISTS applications_job_id_idx             ON applications(job_id);
+CREATE INDEX IF NOT EXISTS applications_freelancer_address_idx ON applications(freelancer_address);
+
+-- ─────────────────────────────────────────
+-- escrows  (schema only; populated by smart-contract layer)
+-- ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS escrows (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  job_id              UUID        NOT NULL UNIQUE REFERENCES jobs(id),
+  contract_id         TEXT        NOT NULL,
+  amount_xlm          NUMERIC(20,7) NOT NULL,
+  status              TEXT        NOT NULL DEFAULT 'funded',   -- funded | released | refunded
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

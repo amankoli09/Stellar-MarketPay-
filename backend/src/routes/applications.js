@@ -13,6 +13,7 @@ const {
   submitApplication, getApplicationsForJob,
   getApplicationsForFreelancer, acceptApplication,
 } = require("../services/applicationService");
+const { verifyJWT } = require("../middleware/auth");
 
 // GET /api/applications/job/:jobId
 router.get("/job/:jobId", generalApplicationRateLimiter ,(req, res, next) => {

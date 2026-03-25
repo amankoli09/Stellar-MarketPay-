@@ -1,91 +1,160 @@
 /**
  * src/services/applicationService.js
+ * All data persisted in the `applications` PostgreSQL table.
  */
 "use strict";
 
-const { v4: uuid } = require("uuid");
-const { applications } = require("./store");
-const { getJob, assignFreelancer } = require("./jobService");
+import { query, connect } from "../db/pool";
+import { getJob, assignFreelancer } from "./jobService";
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
 
 function validatePublicKey(key) {
   if (!key || !/^G[A-Z0-9]{55}$/.test(key)) {
-    const e = new Error("Invalid Stellar public key"); e.status = 400; throw e;
+    const e = new Error("Invalid Stellar public key");
+    e.status = 400;
+    throw e;
   }
 }
 
-function submitApplication({ jobId, freelancerAddress, proposal, bidAmount }) {
-  validatePublicKey(freelancerAddress);
-
-  const job = getJob(jobId);
-  if (job.status !== "open") { const e = new Error("Job is not open for applications"); e.status = 400; throw e; }
-  if (job.clientAddress === freelancerAddress) { const e = new Error("You cannot apply to your own job"); e.status = 400; throw e; }
-  if (!proposal || proposal.length < 50) { const e = new Error("Proposal must be at least 50 characters"); e.status = 400; throw e; }
-  if (!bidAmount || isNaN(parseFloat(bidAmount)) || parseFloat(bidAmount) <= 0) { const e = new Error("Bid must be a positive number"); e.status = 400; throw e; }
-
-  // Check duplicate application
-  const existing = Array.from(applications.values()).find(
-    a => a.jobId === jobId && a.freelancerAddress === freelancerAddress
-  );
-  if (existing) { const e = new Error("You have already applied to this job"); e.status = 409; throw e; }
-
-  const app = {
-    id:                uuid(),
-    jobId,
-    freelancerAddress,
-    proposal:          proposal.trim(),
-    bidAmount:         parseFloat(bidAmount).toFixed(7),
-    status:            "pending",
-    createdAt:         new Date().toISOString(),
+/** Convert snake_case DB row → camelCase API object */
+function rowToApp(row) {
+  return {
+    id:                row.id,
+    jobId:             row.job_id,
+    freelancerAddress: row.freelancer_address,
+    proposal:          row.proposal,
+    bidAmount:         row.bid_amount,
+    status:            row.status,
+    createdAt:         row.created_at,
   };
-
-  applications.set(app.id, app);
-
-  // Increment applicant count on job
-  const j = getJob(jobId);
-  j.applicantCount = (j.applicantCount || 0) + 1;
-
-  return app;
 }
 
-function getApplicationsForJob(jobId) {
-  return Array.from(applications.values())
-    .filter(a => a.jobId === jobId)
-    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-}
+// ─── service functions ───────────────────────────────────────────────────────
 
-function getApplicationsForFreelancer(freelancerAddress) {
+async function submitApplication({ jobId, freelancerAddress, proposal, bidAmount }) {
   validatePublicKey(freelancerAddress);
-  return Array.from(applications.values())
-    .filter(a => a.freelancerAddress === freelancerAddress)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  // Validate the job (throws 404 if missing)
+  const job = await getJob(jobId);
+
+  if (job.status !== "open") {
+    const e = new Error("Job is not open for applications"); e.status = 400; throw e;
+  }
+  if (job.clientAddress === freelancerAddress) {
+    const e = new Error("You cannot apply to your own job"); e.status = 400; throw e;
+  }
+  if (!proposal || proposal.length < 50) {
+    const e = new Error("Proposal must be at least 50 characters"); e.status = 400; throw e;
+  }
+  if (!bidAmount || isNaN(parseFloat(bidAmount)) || parseFloat(bidAmount) <= 0) {
+    const e = new Error("Bid must be a positive number"); e.status = 400; throw e;
+  }
+
+  // Insert; the UNIQUE(job_id, freelancer_address) constraint handles duplicates.
+  let appRow;
+  try {
+    const { rows } = await query(
+      `INSERT INTO applications (job_id, freelancer_address, proposal, bid_amount, status, created_at)
+       VALUES ($1, $2, $3, $4, 'pending', NOW())
+       RETURNING *`,
+      [jobId, freelancerAddress, proposal.trim(), parseFloat(bidAmount).toFixed(7)]
+    );
+    appRow = rows[0];
+  } catch (err) {
+    // Postgres unique-violation code
+    if (err.code === "23505") {
+      const e = new Error("You have already applied to this job"); e.status = 409; throw e;
+    }
+    throw err;
+  }
+
+  // Increment applicant count
+  await query(
+    "UPDATE jobs SET applicant_count = applicant_count + 1, updated_at = NOW() WHERE id = $1",
+    [jobId]
+  );
+
+  return rowToApp(appRow);
 }
 
-function acceptApplication(applicationId, clientAddress) {
+async function getApplicationsForJob(jobId) {
+  const { rows } = await query(
+    "SELECT * FROM applications WHERE job_id = $1 ORDER BY created_at ASC",
+    [jobId]
+  );
+  return rows.map(rowToApp);
+}
+
+async function getApplicationsForFreelancer(freelancerAddress) {
+  validatePublicKey(freelancerAddress);
+  const { rows } = await query(
+    "SELECT * FROM applications WHERE freelancer_address = $1 ORDER BY created_at DESC",
+    [freelancerAddress]
+  );
+  return rows.map(rowToApp);
+}
+
+async function acceptApplication(applicationId, clientAddress) {
   validatePublicKey(clientAddress);
 
-  const app = applications.get(applicationId);
-  if (!app) { const e = new Error("Application not found"); e.status = 404; throw e; }
+  // Fetch the application
+  const { rows: appRows } = await query(
+    "SELECT * FROM applications WHERE id = $1",
+    [applicationId]
+  );
+  if (!appRows.length) {
+    const e = new Error("Application not found"); e.status = 404; throw e;
+  }
+  const app = appRows[0];
 
-  const job = getJob(app.jobId);
-  if (job.clientAddress !== clientAddress) { const e = new Error("Only the job client can accept applications"); e.status = 403; throw e; }
-  if (job.status !== "open") { const e = new Error("Job is no longer accepting applications"); e.status = 400; throw e; }
-
-  // Accept this application
-  app.status = "accepted";
-  applications.set(applicationId, app);
-
-  // Reject all other applications for this job
-  for (const [id, a] of applications) {
-    if (a.jobId === app.jobId && id !== applicationId && a.status === "pending") {
-      a.status = "rejected";
-      applications.set(id, a);
-    }
+  // Verify the calling client owns the job
+  const job = await getJob(app.job_id);
+  if (job.clientAddress !== clientAddress) {
+    const e = new Error("Only the job client can accept applications"); e.status = 403; throw e;
+  }
+  if (job.status !== "open") {
+    const e = new Error("Job is no longer accepting applications"); e.status = 400; throw e;
   }
 
-  // Assign freelancer to job
-  assignFreelancer(app.jobId, app.freelancerAddress);
+  // Run accept + mass-reject atomically
+  const client = await connect();
+  try {
+    await client.query("BEGIN");
 
-  return app;
+    // Accept this one
+    const { rows: updated } = await client.query(
+      "UPDATE applications SET status = 'accepted' WHERE id = $1 RETURNING *",
+      [applicationId]
+    );
+
+    // Reject all other pending applications for the same job
+    await client.query(
+      `UPDATE applications
+       SET status = 'rejected'
+       WHERE job_id = $1 AND id <> $2 AND status = 'pending'`,
+      [app.job_id, applicationId]
+    );
+
+    await client.query("COMMIT");
+    app.status = "accepted";  // reflect in-memory before returning
+
+    // Assign freelancer (updates jobs table; runs outside the transaction above
+    // because jobService manages its own queries via the shared pool)
+    await assignFreelancer(app.job_id, app.freelancer_address);
+
+    return rowToApp(updated[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
-module.exports = { submitApplication, getApplicationsForJob, getApplicationsForFreelancer, acceptApplication };
+export default {
+  submitApplication,
+  getApplicationsForJob,
+  getApplicationsForFreelancer,
+  acceptApplication,
+};

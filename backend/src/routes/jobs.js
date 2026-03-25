@@ -11,6 +11,7 @@ const generalJobRateLimiter = createRateLimiter(30, 1); // 100 requests per minu
 
 
 const { createJob, getJob, listJobs, listJobsByClient } = require("../services/jobService");
+const { verifyJWT } = require("../middleware/auth");
 
 // GET /api/jobs — list jobs (with optional ?category=&status=&limit=&search=)
 router.get("/", generalJobRateLimiter, (req, res, next) => {
