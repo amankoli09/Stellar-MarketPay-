@@ -4,10 +4,16 @@
 "use strict";
 const express = require("express");
 const router  = express.Router();
+const { createRateLimiter } = require("../middleware/rateLimiter");
+
+const jobCreationRateLimiter = createRateLimiter(10, 1); // 10 job creations per minute
+const generalJobRateLimiter = createRateLimiter(30, 1); // 100 requests per minute for listing/getting jobs
+
+
 const { createJob, getJob, listJobs, listJobsByClient } = require("../services/jobService");
 
 // GET /api/jobs — list jobs (with optional ?category=&status=&limit=&search=)
-router.get("/", (req, res, next) => {
+router.get("/", generalJobRateLimiter, (req, res, next) => {
   try {
     const { category, status, limit, search } = req.query;
     res.json({ success: true, data: listJobs({ category, status, limit: parseInt(limit) || 50, search }) });
@@ -15,19 +21,19 @@ router.get("/", (req, res, next) => {
 });
 
 // GET /api/jobs/client/:publicKey — list jobs posted by a client
-router.get("/client/:publicKey", (req, res, next) => {
+router.get("/client/:publicKey", generalJobRateLimiter, (req, res, next) => {
   try { res.json({ success: true, data: listJobsByClient(req.params.publicKey) }); }
   catch (e) { next(e); }
 });
 
 // GET /api/jobs/:id — get single job
-router.get("/:id", (req, res, next) => {
+router.get("/:id", generalJobRateLimiter ,(req, res, next) => {
   try { res.json({ success: true, data: getJob(req.params.id) }); }
   catch (e) { next(e); }
 });
 
 // POST /api/jobs — create a new job
-router.post("/", (req, res, next) => {
+router.post("/", jobCreationRateLimiter ,(req, res, next) => {
   try {
     const job = createJob(req.body);
     res.status(201).json({ success: true, data: job });

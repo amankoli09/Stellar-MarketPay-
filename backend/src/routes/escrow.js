@@ -6,6 +6,10 @@
  */
 "use strict";
 const express = require("express");
+const { createRateLimiter } = require("../middleware/rateLimiter");
+
+const escrowActionRateLimiter = createRateLimiter(30, 1); // 10 escrow actions per minute
+
 const router  = express.Router();
 const { escrows } = require("../services/store");
 const { getJob, updateJobStatus } = require("../services/jobService");
@@ -57,7 +61,7 @@ router.post("/:jobId/release", (req, res, next) => {
  * GET /api/escrow/:jobId
  * Get escrow state for a job.
  */
-router.get("/:jobId", (req, res, next) => {
+router.get("/:jobId", escrowActionRateLimiter ,(req, res, next) => {
   try {
     const record = escrows.get(req.params.jobId);
     if (!record) { const e = new Error("No escrow record found for this job"); e.status = 404; throw e; }
