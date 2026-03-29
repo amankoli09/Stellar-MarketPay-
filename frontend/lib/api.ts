@@ -293,8 +293,15 @@ export async function upsertProfile(payload: Partial<UserProfile> & { publicKey:
  * @throws {import("axios").AxiosError} If release validation fails or the request errors.
  * @see backend/src/routes/escrow.js
  */
-export async function releaseEscrow(jobId: string, clientAddress: string) {
-  const { data } = await api.post(`/api/escrow/${jobId}/release`, { clientAddress });
+export async function releaseEscrow(
+  jobId: string,
+  clientAddress: string,
+  contractTxHash?: string
+) {
+  const { data } = await api.post(`/api/escrow/${jobId}/release`, {
+    clientAddress,
+    ...(contractTxHash ? { contractTxHash } : {}),
+  });
   return data.data;
 }
 
