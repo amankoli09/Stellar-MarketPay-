@@ -8,6 +8,7 @@ const pool = require("../db/pool");
 
 const VALID_PROFILE_ROLES = ["client", "freelancer", "both"];
 const VALID_PORTFOLIO_TYPES = ["github", "live", "stellar_tx"];
+const VALID_AVAILABILITY_STATUSES = ["available", "busy", "unavailable"];
 const MAX_PORTFOLIO_ITEMS = 10;
 
 function validatePublicKey(key) {
@@ -84,6 +85,46 @@ function validatePortfolioItems(portfolioItems) {
   });
 }
 
+function validateAvailabilityDate(value, fieldName) {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") {
+    throw createValidationError(`${fieldName} must be a valid date string`);
+  }
+
+  const trimmedValue = value.trim();
+  const date = new Date(trimmedValue);
+  if (Number.isNaN(date.getTime())) {
+    throw createValidationError(`${fieldName} must be a valid date string`);
+  }
+
+  return date.toISOString();
+}
+
+function validateAvailability(availability) {
+  if (availability == null) return null;
+  if (typeof availability !== "object" || Array.isArray(availability)) {
+    throw createValidationError("availability must be an object");
+  }
+
+  const status = typeof availability.status === "string" ? availability.status.trim() : "";
+  if (!VALID_AVAILABILITY_STATUSES.includes(status)) {
+    throw createValidationError("Availability status must be one of: available, busy, unavailable");
+  }
+
+  const availableFrom = validateAvailabilityDate(availability.availableFrom, "availableFrom");
+  const availableUntil = validateAvailabilityDate(availability.availableUntil, "availableUntil");
+
+  if (availableFrom && availableUntil && new Date(availableFrom) > new Date(availableUntil)) {
+    throw createValidationError("availableFrom must be before availableUntil");
+  }
+
+  return {
+    status,
+    ...(availableFrom ? { availableFrom } : {}),
+    ...(availableUntil ? { availableUntil } : {}),
+  };
+}
+
 function rowToProfile(row) {
   return {
     publicKey: row.public_key,
@@ -91,6 +132,7 @@ function rowToProfile(row) {
     bio: row.bio,
     skills: row.skills,
     portfolioItems: Array.isArray(row.portfolio_items) ? row.portfolio_items : [],
+    availability: row.availability && typeof row.availability === "object" ? row.availability : null,
     role: row.role,
     completedJobs: row.completed_jobs,
     totalEarnedXLM: row.total_earned_xlm,
@@ -126,22 +168,24 @@ async function getProfile(publicKey) {
   return profile;
 }
 
-async function upsertProfile({ publicKey, displayName, bio, skills, portfolioItems, role }) {
+async function upsertProfile({ publicKey, displayName, bio, skills, portfolioItems, availability, role }) {
   validatePublicKey(publicKey);
 
   const safeSkills = Array.isArray(skills) ? skills.slice(0, 15) : null;
   const safePortfolioItems = validatePortfolioItems(portfolioItems);
+  const safeAvailability = validateAvailability(availability);
   const safeRole = validateProfileRole(role);
 
   const { rows } = await pool.query(
     `
-    INSERT INTO profiles (public_key, display_name, bio, skills, portfolio_items, role, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5::jsonb, $6, NOW(), NOW())
+    INSERT INTO profiles (public_key, display_name, bio, skills, portfolio_items, availability, role, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, NOW(), NOW())
     ON CONFLICT (public_key) DO UPDATE
       SET display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), profiles.display_name),
           bio = COALESCE(NULLIF(EXCLUDED.bio, ''), profiles.bio),
           skills = COALESCE(EXCLUDED.skills, profiles.skills),
           portfolio_items = COALESCE(EXCLUDED.portfolio_items, profiles.portfolio_items),
+          availability = COALESCE(EXCLUDED.availability, profiles.availability),
           role = COALESCE(NULLIF(EXCLUDED.role, ''), profiles.role),
           updated_at = NOW()
     RETURNING *
@@ -152,8 +196,28 @@ async function upsertProfile({ publicKey, displayName, bio, skills, portfolioIte
       bio?.trim() || null,
       safeSkills,
       JSON.stringify(safePortfolioItems),
+      safeAvailability ? JSON.stringify(safeAvailability) : null,
       safeRole,
     ]
+  );
+
+  return rowToProfile(rows[0]);
+}
+
+async function updateAvailability(publicKey, availability) {
+  validatePublicKey(publicKey);
+  const safeAvailability = validateAvailability(availability);
+
+  const { rows } = await pool.query(
+    `
+    INSERT INTO profiles (public_key, availability, created_at, updated_at)
+    VALUES ($1, $2::jsonb, NOW(), NOW())
+    ON CONFLICT (public_key) DO UPDATE
+      SET availability = EXCLUDED.availability,
+          updated_at = NOW()
+    RETURNING *
+    `,
+    [publicKey, safeAvailability ? JSON.stringify(safeAvailability) : null]
   );
 
   return rowToProfile(rows[0]);
@@ -162,6 +226,8 @@ async function upsertProfile({ publicKey, displayName, bio, skills, portfolioIte
 module.exports = {
   getProfile,
   upsertProfile,
+  updateAvailability,
   VALID_PORTFOLIO_TYPES,
+  VALID_AVAILABILITY_STATUSES,
   MAX_PORTFOLIO_ITEMS,
 };

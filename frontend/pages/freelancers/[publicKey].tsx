@@ -7,9 +7,14 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { useEffect, useMemo, useState } from "react";
 import { fetchPublicProfile } from "@/lib/api";
-import { formatXLM, shortenAddress } from "@/utils/format";
+import {
+  availabilityStatusLabel,
+  availabilitySummary,
+  formatXLM,
+  shortenAddress,
+} from "@/utils/format";
 import { accountUrl, isValidStellarAddress } from "@/lib/stellar";
-import type { PortfolioItem, UserProfile } from "@/utils/types";
+import type { AvailabilityStatus, PortfolioItem, UserProfile } from "@/utils/types";
 
 type LoadState =
   | { status: "loading" }
@@ -38,6 +43,13 @@ function getPortfolioTypeLabel(item: PortfolioItem) {
   }
 }
 
+function getAvailabilityBadgeClass(status?: AvailabilityStatus | null) {
+  if (status === "available") return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+  if (status === "busy") return "bg-amber-500/10 text-amber-300 border-amber-500/20";
+  if (status === "unavailable") return "bg-red-500/10 text-red-400 border-red-500/20";
+  return "bg-market-500/10 text-market-300 border-market-500/20";
+}
+
 export default function PublicFreelancerProfilePage() {
   const router = useRouter();
   const rawKey = typeof router.query.publicKey === "string" ? router.query.publicKey : "";
@@ -56,8 +68,8 @@ export default function PublicFreelancerProfilePage() {
 
   const metaDescription = useMemo(() => {
     if (state.status === "ok" && state.profile.bio?.trim()) {
-      const b = state.profile.bio.trim();
-      return b.length > 160 ? `${b.slice(0, 157)}...` : b;
+      const bio = state.profile.bio.trim();
+      return bio.length > 160 ? `${bio.slice(0, 157)}...` : bio;
     }
     return "View freelancer profile on Stellar MarketPay.";
   }, [state]);
@@ -84,10 +96,10 @@ export default function PublicFreelancerProfilePage() {
         if (cancelled) return;
         if (profile === null) setState({ status: "not_found" });
         else setState({ status: "ok", profile });
-      } catch (e: unknown) {
+      } catch (error: unknown) {
         if (cancelled) return;
-        const msg = e instanceof Error ? e.message : "Could not load profile.";
-        setState({ status: "error", message: msg });
+        const message = error instanceof Error ? error.message : "Could not load profile.";
+        setState({ status: "error", message });
       }
     })();
 
@@ -176,6 +188,22 @@ export default function PublicFreelancerProfilePage() {
                   View on Stellar Expert →
                 </a>
               </div>
+            </div>
+
+            <div className="mb-6 sm:mb-8 rounded-xl border border-market-500/15 bg-ink-900/50 p-4">
+              <div className="flex flex-wrap items-center gap-3 mb-2">
+                <h2 className="label !mb-0">Availability</h2>
+                <span
+                  className={`text-xs px-2.5 py-1 rounded-full border ${getAvailabilityBadgeClass(
+                    state.profile.availability?.status
+                  )}`}
+                >
+                  {availabilityStatusLabel(state.profile.availability?.status)}
+                </span>
+              </div>
+              <p className="text-sm text-amber-700/90">
+                {availabilitySummary(state.profile.availability) || "Availability has not been set yet."}
+              </p>
             </div>
 
             {state.profile.bio?.trim() ? (

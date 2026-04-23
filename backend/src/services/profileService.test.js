@@ -6,6 +6,7 @@ const pool = require("../db/pool");
 const {
   getProfile,
   upsertProfile,
+  updateAvailability,
   MAX_PORTFOLIO_ITEMS,
 } = require("./profileService");
 
@@ -30,6 +31,10 @@ describe("profileService", () => {
               { title: "Launch", url: "https://example.com", type: "live" },
               { title: "Escrow release", url: "abc123tx", type: "stellar_tx" },
             ],
+            availability: {
+              status: "available",
+              availableFrom: "2026-05-01T00:00:00.000Z",
+            },
             role: "freelancer",
             completed_jobs: 0,
             total_earned_xlm: "0.0000000",
@@ -43,6 +48,10 @@ describe("profileService", () => {
       const profile = await upsertProfile({
         publicKey,
         role: "freelancer",
+        availability: {
+          status: "available",
+          availableFrom: "2026-05-01",
+        },
         portfolioItems: [
           { title: "Repo", url: "https://github.com/example/repo", type: "github" },
           { title: "Launch", url: "https://example.com", type: "live" },
@@ -51,6 +60,10 @@ describe("profileService", () => {
       });
 
       expect(profile.portfolioItems).toHaveLength(3);
+      expect(profile.availability).toEqual({
+        status: "available",
+        availableFrom: "2026-05-01T00:00:00.000Z",
+      });
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(JSON.parse(pool.query.mock.calls[0][1][4])).toEqual(
         [
@@ -90,6 +103,21 @@ describe("profileService", () => {
 
       expect(pool.query).not.toHaveBeenCalled();
     });
+
+    it("rejects invalid availability status", async () => {
+      await expect(
+        upsertProfile({
+          publicKey,
+          role: "freelancer",
+          availability: {
+            status: "soon",
+            availableFrom: "2026-05-01",
+          },
+        })
+      ).rejects.toThrow("Availability status must be one of: available, busy, unavailable");
+
+      expect(pool.query).not.toHaveBeenCalled();
+    });
   });
 
   describe("getProfile", () => {
@@ -104,6 +132,11 @@ describe("profileService", () => {
             portfolio_items: [
               { title: "Repo", url: "https://github.com/example/repo", type: "github" },
             ],
+            availability: {
+              status: "busy",
+              availableFrom: "2026-06-01T00:00:00.000Z",
+              availableUntil: "2026-06-30T00:00:00.000Z",
+            },
             role: "freelancer",
             completed_jobs: 3,
             total_earned_xlm: "150.0000000",
@@ -120,8 +153,52 @@ describe("profileService", () => {
       expect(profile.portfolioItems).toEqual([
         { title: "Repo", url: "https://github.com/example/repo", type: "github" },
       ]);
+      expect(profile.availability).toEqual({
+        status: "busy",
+        availableFrom: "2026-06-01T00:00:00.000Z",
+        availableUntil: "2026-06-30T00:00:00.000Z",
+      });
       expect(profile.rating).toBe(4.8);
       expect(profile.ratingCount).toBe(2);
+    });
+  });
+
+  describe("updateAvailability", () => {
+    it("persists valid availability updates", async () => {
+      pool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            public_key: publicKey,
+            display_name: "Jane Doe",
+            bio: null,
+            skills: [],
+            portfolio_items: [],
+            availability: {
+              status: "busy",
+              availableFrom: "2026-07-01T00:00:00.000Z",
+              availableUntil: "2026-07-10T00:00:00.000Z",
+            },
+            role: "freelancer",
+            completed_jobs: 0,
+            total_earned_xlm: "0.0000000",
+            rating: null,
+            created_at: "2026-04-23T00:00:00.000Z",
+            updated_at: "2026-04-23T00:00:00.000Z",
+          },
+        ],
+      });
+
+      const profile = await updateAvailability(publicKey, {
+        status: "busy",
+        availableFrom: "2026-07-01",
+        availableUntil: "2026-07-10",
+      });
+
+      expect(profile.availability).toEqual({
+        status: "busy",
+        availableFrom: "2026-07-01T00:00:00.000Z",
+        availableUntil: "2026-07-10T00:00:00.000Z",
+      });
     });
   });
 });

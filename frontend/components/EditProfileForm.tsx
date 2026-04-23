@@ -3,8 +3,15 @@
  * Form to view and edit user profile details.
  */
 import { useState, useEffect } from "react";
-import { fetchProfile, upsertProfile } from "@/lib/api";
-import type { PortfolioItem, PortfolioItemType, UserProfile, UserRole } from "@/utils/types";
+import { fetchProfile, updateProfileAvailability, upsertProfile } from "@/lib/api";
+import type {
+  Availability,
+  AvailabilityStatus,
+  PortfolioItem,
+  PortfolioItemType,
+  UserProfile,
+  UserRole,
+} from "@/utils/types";
 import clsx from "clsx";
 
 interface Props {
@@ -17,9 +24,22 @@ const portfolioTypeOptions: { value: PortfolioItemType; label: string; placehold
   { value: "live", label: "Live URL", placeholder: "https://example.com" },
   { value: "stellar_tx", label: "Stellar Transaction", placeholder: "Transaction ID" },
 ];
+const availabilityStatusOptions: { value: AvailabilityStatus; label: string }[] = [
+  { value: "available", label: "Available" },
+  { value: "busy", label: "Busy" },
+  { value: "unavailable", label: "Unavailable" },
+];
 
 function createEmptyPortfolioItem(): PortfolioItem {
   return { title: "", url: "", type: "github" };
+}
+
+function createDefaultAvailability(): Availability {
+  return {
+    status: "available",
+    availableFrom: "",
+    availableUntil: "",
+  };
 }
 
 export default function EditProfileForm({ publicKey }: Props) {
@@ -35,6 +55,7 @@ export default function EditProfileForm({ publicKey }: Props) {
   const [skills, setSkills] = useState<string[]>([]);
   const [skillInput, setSkillInput] = useState("");
   const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>([]);
+  const [availability, setAvailability] = useState<Availability>(createDefaultAvailability());
 
   useEffect(() => {
     fetchProfile(publicKey)
@@ -46,6 +67,11 @@ export default function EditProfileForm({ publicKey }: Props) {
           setRole(data.role || "freelancer");
           setSkills(data.skills || []);
           setPortfolioItems(data.portfolioItems || []);
+          setAvailability({
+            status: data.availability?.status || "available",
+            availableFrom: data.availability?.availableFrom || "",
+            availableUntil: data.availability?.availableUntil || "",
+          });
         }
       })
       .catch((err) => {
@@ -94,6 +120,10 @@ export default function EditProfileForm({ publicKey }: Props) {
     setPortfolioItems((current) => current.filter((_, itemIndex) => itemIndex !== index));
   };
 
+  const updateAvailabilityField = <K extends keyof Availability>(key: K, value: Availability[K]) => {
+    setAvailability((current) => ({ ...current, [key]: value }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (displayName && (displayName.length < 3 || displayName.length > 30)) {
@@ -124,6 +154,15 @@ export default function EditProfileForm({ publicKey }: Props) {
       return;
     }
 
+    if (
+      availability.availableFrom &&
+      availability.availableUntil &&
+      new Date(availability.availableFrom) > new Date(availability.availableUntil)
+    ) {
+      setErrorMsg("Available from must be before available until.");
+      return;
+    }
+
     setSaving(true);
     setErrorMsg("");
     setSuccessMsg("");
@@ -137,8 +176,21 @@ export default function EditProfileForm({ publicKey }: Props) {
         skills,
         portfolioItems: normalizedPortfolioItems,
       });
-      setProfile(updated);
-      setPortfolioItems(updated.portfolioItems || []);
+
+      const availabilityPayload: Availability = {
+        status: availability.status,
+        ...(availability.availableFrom ? { availableFrom: availability.availableFrom } : {}),
+        ...(availability.availableUntil ? { availableUntil: availability.availableUntil } : {}),
+      };
+      const profileWithAvailability = await updateProfileAvailability(publicKey, availabilityPayload);
+
+      setProfile(profileWithAvailability);
+      setPortfolioItems(profileWithAvailability.portfolioItems || []);
+      setAvailability({
+        status: profileWithAvailability.availability?.status || "available",
+        availableFrom: profileWithAvailability.availability?.availableFrom || "",
+        availableUntil: profileWithAvailability.availability?.availableUntil || "",
+      });
       setSuccessMsg("Profile saved successfully!");
       setTimeout(() => setSuccessMsg(""), 3000);
     } catch (err: any) {
@@ -263,6 +315,56 @@ export default function EditProfileForm({ publicKey }: Props) {
               placeholder={skills.length === 0 ? "Type a skill and press Enter..." : "Add more..."}
               className="flex-1 bg-transparent border-none outline-none text-amber-100 placeholder:text-amber-800/50 min-w-[120px] px-2"
             />
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between gap-4 mb-3">
+            <div>
+              <label className="block text-sm font-medium text-amber-100">Availability</label>
+              <p className="text-xs text-amber-800 mt-1">
+                Show clients when you can take on new work.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-market-500/20 bg-ink-900/50 p-4 space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-amber-100 mb-1.5">Status</label>
+              <select
+                value={availability.status}
+                onChange={(e) => updateAvailabilityField("status", e.target.value as AvailabilityStatus)}
+                className="w-full bg-ink-950/60 border border-market-500/20 rounded-xl px-4 py-3 text-amber-100 focus:outline-none focus:border-market-400 transition-colors"
+              >
+                {availabilityStatusOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-amber-100 mb-1.5">Available From</label>
+                <input
+                  type="date"
+                  value={availability.availableFrom ? availability.availableFrom.slice(0, 10) : ""}
+                  onChange={(e) => updateAvailabilityField("availableFrom", e.target.value)}
+                  className="w-full bg-ink-950/60 border border-market-500/20 rounded-xl px-4 py-3 text-amber-100 focus:outline-none focus:border-market-400 transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-amber-100 mb-1.5">Available Until</label>
+                <input
+                  type="date"
+                  value={availability.availableUntil ? availability.availableUntil.slice(0, 10) : ""}
+                  onChange={(e) => updateAvailabilityField("availableUntil", e.target.value)}
+                  className="w-full bg-ink-950/60 border border-market-500/20 rounded-xl px-4 py-3 text-amber-100 focus:outline-none focus:border-market-400 transition-colors"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
