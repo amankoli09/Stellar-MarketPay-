@@ -8,6 +8,7 @@ import Link from "next/link";
 import ApplicationForm from "@/components/ApplicationForm";
 import WalletConnect from "@/components/WalletConnect";
 import RatingForm from "@/components/RatingForm";
+import ProposalComparison from "@/components/ProposalComparison";
 import { fetchJob, fetchApplications, acceptApplication, releaseEscrow } from "@/lib/api";
 import { formatXLM, timeAgo, formatDate, shortenAddress, statusLabel, statusClass } from "@/utils/format";
 import {
@@ -40,6 +41,8 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
   const [releaseSyncedWithBackend, setReleaseSyncedWithBackend] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
+  const [selectedApplications, setSelectedApplications] = useState<Set<string>>(new Set());
+  const [showComparison, setShowComparison] = useState(false);
 
   const isClient     = publicKey && job?.clientAddress === publicKey;
   const isFreelancer = publicKey && job?.freelancerAddress === publicKey;
@@ -62,10 +65,29 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
       await acceptApplication(appId, publicKey);
       const [j, apps] = await Promise.all([fetchJob(id as string), fetchApplications(id as string)]);
       setJob(j); setApplications(apps);
+      setSelectedApplications(new Set());
     } catch {
       setActionError("Failed to accept application.");
     }
   };
+
+  const handleToggleSelection = (appId: string) => {
+    setSelectedApplications((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(appId)) {
+        newSet.delete(appId);
+      } else if (newSet.size < 3) {
+        newSet.add(appId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleClearSelection = () => {
+    setSelectedApplications(new Set());
+  };
+
+  const selectedApps = applications.filter((app) => selectedApplications.has(app.id));
 
   const handleReleaseEscrow = async () => {
     if (!publicKey || !job) return;
@@ -224,17 +246,38 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
       {/* Applications (client view) */}
       {isClient && applications.length > 0 && (
         <div className="mb-6">
-          <h2 className="font-display text-xl font-bold text-amber-100 mb-4">
-            Applications ({applications.length})
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-display text-xl font-bold text-amber-100">
+              Applications ({applications.length})
+            </h2>
+            {selectedApplications.size >= 2 && (
+              <button
+                onClick={() => setShowComparison(true)}
+                className="btn-primary text-sm py-2 px-4"
+              >
+                Compare Selected ({selectedApplications.size})
+              </button>
+            )}
+          </div>
           <div className="space-y-4">
             {applications.map((app) => (
               <div key={app.id} className="card">
                 <div className="flex items-start justify-between gap-4 mb-3">
-                  <a href={accountUrl(app.freelancerAddress)} target="_blank" rel="noopener noreferrer"
-                    className="address-tag hover:border-market-500/40 transition-colors">
-                    {shortenAddress(app.freelancerAddress)} ↗
-                  </a>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedApplications.has(app.id)}
+                      onChange={() => handleToggleSelection(app.id)}
+                      disabled={
+                        !selectedApplications.has(app.id) && selectedApplications.size >= 3
+                      }
+                      className="w-4 h-4 rounded border-market-500/30 bg-market-500/10 text-market-400 focus:ring-market-500/50 cursor-pointer"
+                    />
+                    <a href={accountUrl(app.freelancerAddress)} target="_blank" rel="noopener noreferrer"
+                      className="address-tag hover:border-market-500/40 transition-colors">
+                      {shortenAddress(app.freelancerAddress)} ↗
+                    </a>
+                  </div>
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-market-400 font-semibold text-sm">{formatXLM(app.bidAmount)}</span>
                     <span className={clsx("text-xs px-2.5 py-1 rounded-full border",
@@ -270,6 +313,17 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Proposal Comparison Modal */}
+      {showComparison && (
+        <ProposalComparison
+          applications={selectedApps}
+          job={job}
+          publicKey={publicKey}
+          onClose={() => setShowComparison(false)}
+          onAccept={handleAcceptApplication}
+        />
       )}
 
       {/* Apply (freelancer view) */}
