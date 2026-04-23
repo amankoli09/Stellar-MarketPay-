@@ -11,6 +11,7 @@ import { JOB_CATEGORIES, SKILL_SUGGESTIONS } from "@/utils/format";
 import { useRouter } from "next/router";
 import clsx from "clsx";
 import { useToast } from "@/components/Toast";
+import type { Currency } from "@/utils/types";
 
 interface PostJobFormProps { publicKey: string; }
 
@@ -47,7 +48,9 @@ const emptyForm: FormState = {
 export default function PostJobForm({ publicKey }: PostJobFormProps) {
   const router = useRouter();
   const toast = useToast();
-  const [form, setForm] = useState<FormState>(emptyForm);
+  const [form, setForm] = useState({
+    title: "", description: "", budget: "", category: "", skillInput: "", deadline: "", currency: "XLM" as Currency,
+  });
   const [skills, setSkills] = useState<string[]>([]);
   const [templates, setTemplates] = useState<JobTemplate[]>([]);
   const [selectedTemplateName, setSelectedTemplateName] = useState("");
@@ -228,6 +231,7 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
         title: form.title.trim(),
         description: form.description.trim(),
         budget: parseFloat(form.budget).toFixed(7),
+        currency: form.currency,
         category: form.category,
         skills,
         deadline: form.deadline || undefined,
@@ -242,7 +246,8 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
         jobId: job.id,
         // Use client as placeholder freelancer until one is hired
         freelancerAddress: publicKey,
-        budgetXLM: parseFloat(form.budget).toFixed(7),
+        budget: parseFloat(form.budget).toFixed(7),
+        currency: form.currency,
       });
 
       const { signedXDR, error: signError } = await signTransactionWithWallet(unsignedTx.toXDR());
@@ -397,8 +402,8 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
           )}
         </div>
 
-        {/* Category + Budget row */}
-        <div className="grid sm:grid-cols-2 gap-4">
+        {/* Category + Budget + Currency row */}
+        <div className="grid sm:grid-cols-3 gap-4">
           <div>
             <label className="label">Category</label>
             <select value={form.category} onChange={(e) => set("category", e.target.value)}
@@ -408,10 +413,19 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
             </select>
           </div>
           <div>
-            <label className="label">Budget (XLM)</label>
+            <label className="label">Budget</label>
             <input type="number" value={form.budget} onChange={(e) => set("budget", e.target.value)}
               placeholder="e.g. 500" min="1" step="1" className="input-field" />
             <p className="mt-1 text-xs text-amber-800/50">Will be locked in escrow on hire</p>
+          </div>
+          <div>
+            <label className="label">Currency</label>
+            <select value={form.currency} onChange={(e) => set("currency", e.target.value as Currency)}
+              className="input-field appearance-none cursor-pointer">
+              <option value="XLM">XLM (Stellar Lumens)</option>
+              <option value="USDC">USDC (USD Coin)</option>
+            </select>
+            <p className="mt-1 text-xs text-amber-800/50">Payment currency for this job</p>
           </div>
         </div>
 
@@ -583,7 +597,7 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
         </button>
 
         <p className="text-center text-xs text-amber-800/60">
-          By posting, the budget ({form.budget ? `${form.budget} XLM` : "—"}) will be held in a Soroban escrow contract and released when you approve the completed work.
+          By posting, budget ({form.budget ? `${form.budget} ${form.currency}` : "—"}) will be held in a Soroban escrow contract and released when you approve of completed work.
         </p>
       </div>
     </div>
