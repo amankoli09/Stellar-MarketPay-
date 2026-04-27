@@ -3,14 +3,8 @@
  */
 "use strict";
 
-import pool from "../db/pool.js";
-
-const query = pool.query.bind(pool);
-
-
-import { getTimezoneOffset } from "date-fns-tz";
-
-// ─── constants ─────────────────────────────────────────
+const pool = require("../db/pool");
+const { getTimezoneOffset } = require("date-fns-tz");
 
 const VALID_STATUSES = ["open", "in_progress", "completed", "cancelled"];
 
@@ -27,8 +21,6 @@ const VALID_CATEGORIES = [
   "Other",
 ];
 
-// ─── helpers ───────────────────────────────────────────
-
 function validatePublicKey(key) {
   if (!key || !/^G[A-Z0-9]{55}$/.test(key)) {
     const e = new Error("Invalid Stellar public key");
@@ -37,14 +29,22 @@ function validatePublicKey(key) {
   }
 }
 
+/**
+ * Check if a job's timezone is compatible with the user's timezone.
+ * Compatible if the time difference is within +/-3 hours.
+ *
+ * @param {string} jobTimezone - IANA timezone string of the job (e.g., "America/New_York")
+ * @param {string} userTimezone - IANA timezone string of the user (e.g., "Europe/London")
+ * @returns {boolean} true if timezones are compatible or if job has no timezone restriction
+ */
 function isTimezoneCompatible(jobTimezone, userTimezone) {
-  if (!jobTimezone || !userTimezone) return true;
+  if (!jobTimezone) return true;
+  if (!userTimezone) return true;
 
   try {
     const now = new Date();
     const userOffset = getTimezoneOffset(userTimezone, now);
     const jobOffset = getTimezoneOffset(jobTimezone, now);
-
     const diffHours = Math.abs(userOffset - jobOffset) / (1000 * 60 * 60);
     return diffHours <= 3;
   } catch {
@@ -77,8 +77,6 @@ function rowToJob(row) {
   };
 }
 
-// ─── service functions ─────────────────────────────────
-
 async function createJob({
   title,
   description,
@@ -87,28 +85,48 @@ async function createJob({
   category,
   skills,
   deadline,
+  timezone,
+  screeningQuestions,
   clientAddress,
-  timezone = null,
-  screeningQuestions = [],
 }) {
   validatePublicKey(clientAddress);
 
-  if (!title || title.length < 10) throw new Error("Title must be at least 10 characters");
-  if (!description || description.length < 30) throw new Error("Description must be at least 30 characters");
-  if (!budget || parseFloat(budget) <= 0) throw new Error("Invalid budget");
-  if (!["XLM", "USDC"].includes(currency)) throw new Error("Invalid currency");
-  if (!VALID_CATEGORIES.includes(category)) throw new Error("Invalid category");
+  if (!title || title.length < 10) {
+    const e = new Error("Title must be at least 10 characters");
+    e.status = 400;
+    throw e;
+  }
+  if (!description || description.length < 30) {
+    const e = new Error("Description must be at least 30 characters");
+    e.status = 400;
+    throw e;
+  }
+  if (!budget || isNaN(parseFloat(budget)) || parseFloat(budget) <= 0) {
+    const e = new Error("Budget must be a positive number");
+    e.status = 400;
+    throw e;
+  }
+  if (!currency || !["XLM", "USDC"].includes(currency)) {
+    const e = new Error("Currency must be XLM or USDC");
+    e.status = 400;
+    throw e;
+  }
+  if (!VALID_CATEGORIES.includes(category)) {
+    const e = new Error("Invalid category");
+    e.status = 400;
+    throw e;
+  }
 
   const safeSkills = Array.isArray(skills) ? skills.slice(0, 8) : [];
-  const safeQuestions = Array.isArray(screeningQuestions)
-    ? screeningQuestions.slice(0, 5)
+  const safeScreeningQuestions = Array.isArray(screeningQuestions)
+    ? screeningQuestions.slice(0, 5).filter((q) => q && q.trim().length > 0)
     : [];
 
-  const { rows } = await query(
+  const { rows } = await pool.query(
     `
     INSERT INTO jobs
-    (title, description, budget, currency, category, skills, status, client_address, deadline, timezone, screening_questions, created_at, updated_at)
-    VALUES ($1,$2,$3,$4,$5,$6,'open',$7,$8,$9,$10,NOW(),NOW())
+      (title, description, budget, currency, category, skills, status, client_address, deadline, timezone, screening_questions, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8, $9, $10, NOW(), NOW())
     RETURNING *
     `,
     [
@@ -129,12 +147,37 @@ async function createJob({
 }
 
 async function getJob(id) {
-  const { rows } = await query("SELECT * FROM jobs WHERE id = $1", [id]);
-  if (!rows.length) throw new Error("Job not found");
+  const { rows } = await pool.query("SELECT * FROM jobs WHERE id = $1", [id]);
+  if (!rows.length) {
+    const e = new Error("Job not found");
+    e.status = 404;
+    throw e;
+  }
   return rowToJob(rows[0]);
 }
 
-async function listJobs({ category, status = "open", limit = 20, search, cursor, timezone } = {}) {
+function encodeCursor(jobRow) {
+  return Buffer.from(
+    JSON.stringify({
+      createdAt: jobRow.created_at,
+      id: jobRow.id,
+    })
+  ).toString("base64");
+}
+
+function decodeCursor(cursor) {
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, "base64").toString("utf8"));
+    if (!decoded.createdAt || !decoded.id) throw new Error("Invalid cursor");
+    return decoded;
+  } catch (_) {
+    const e = new Error("Invalid cursor");
+    e.status = 400;
+    throw e;
+  }
+}
+
+async function listJobs({ category, status = "open", limit = 50, search, cursor, timezone } = {}) {
   const conditions = [];
   const params = [];
 
@@ -148,19 +191,42 @@ async function listJobs({ category, status = "open", limit = 20, search, cursor,
     conditions.push(`category = $${params.length}`);
   }
 
+  if (search) {
+    params.push(`%${search.toLowerCase()}%`);
+    const idx = params.length;
+    conditions.push(
+      `(LOWER(title) LIKE $${idx} OR LOWER(description) LIKE $${idx} OR EXISTS (
+         SELECT 1 FROM unnest(skills) s WHERE LOWER(s) LIKE $${idx}
+       ))`
+    );
+  }
+
+  if (cursor) {
+    const decoded = decodeCursor(cursor);
+    params.push(decoded.createdAt, decoded.id);
+    const createdAtIdx = params.length - 1;
+    const idIdx = params.length;
+    conditions.push(
+      `(created_at < $${createdAtIdx} OR (created_at = $${createdAtIdx} AND id < $${idIdx}))`
+    );
+  }
+
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   params.push(limit);
 
-  const { rows } = await query(
-    `SELECT * FROM jobs ${where} ORDER BY created_at DESC LIMIT $${params.length}`,
+  const { rows } = await pool.query(
+    `SELECT * FROM jobs ${where} ORDER BY
+       CASE WHEN boosted = true AND (boosted_until IS NULL OR boosted_until > NOW()) THEN 0 ELSE 1 END,
+       created_at DESC, id DESC LIMIT $${params.length}`,
     params
   );
 
   let jobs = rows.map(rowToJob);
 
+  let filteredJobs = currentRows.map(rowToJob);
   if (timezone) {
-    jobs = jobs.filter((job) => isTimezoneCompatible(job.timezone, timezone));
+    filteredJobs = filteredJobs.filter((job) => isTimezoneCompatible(job.timezone, timezone));
   }
 
   return { jobs };
@@ -168,36 +234,100 @@ async function listJobs({ category, status = "open", limit = 20, search, cursor,
 
 async function listJobsByClient(clientAddress) {
   validatePublicKey(clientAddress);
-
-  const { rows } = await query(
+  const { rows } = await pool.query(
     "SELECT * FROM jobs WHERE client_address = $1 ORDER BY created_at DESC",
     [clientAddress]
   );
+  return rows.map(rowToJob);
+}
+
+async function updateJobStatus(id, status) {
+  if (!VALID_STATUSES.includes(status)) {
+    const e = new Error("Invalid status");
+    e.status = 400;
+    throw e;
+  }
+
+  const { rows } = await pool.query(
+    "UPDATE jobs SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+    [status, id]
+  );
+
+  if (!rows.length) {
+    const e = new Error("Job not found");
+    e.status = 404;
+    throw e;
+  }
+
+  return rowToJob(rows[0]);
+}
+
+async function assignFreelancer(jobId, freelancerAddress) {
+  validatePublicKey(freelancerAddress);
+
+  const { rows } = await pool.query(
+    `UPDATE jobs
+     SET freelancer_address = $1, status = 'in_progress', updated_at = NOW()
+     WHERE id = $2
+     RETURNING *`,
+    [freelancerAddress, jobId]
+  );
+
+  if (!rows.length) {
+    const e = new Error("Job not found");
+    e.status = 404;
+    throw e;
+  }
 
   return rows.map(rowToJob);
 }
 
 async function updateJobEscrowId(jobId, escrowContractId) {
-  const { rows } = await query(
-    "UPDATE jobs SET escrow_contract_id=$1 WHERE id=$2 RETURNING *",
+  if (!escrowContractId || typeof escrowContractId !== "string") {
+    const e = new Error("Invalid escrow contract ID");
+    e.status = 400;
+    throw e;
+  }
+
+  const { rows } = await pool.query(
+    "UPDATE jobs SET escrow_contract_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
     [escrowContractId, jobId]
   );
 
-  if (!rows.length) throw new Error("Job not found");
+  if (!rows.length) {
+    const e = new Error("Job not found");
+    e.status = 404;
+    throw e;
+  }
 
   return rowToJob(rows[0]);
 }
 
 async function deleteJob(jobId) {
-  await query("DELETE FROM jobs WHERE id = $1", [jobId]);
+  const { rowCount } = await pool.query("DELETE FROM jobs WHERE id = $1", [jobId]);
+  if (!rowCount) {
+    const e = new Error("Job not found");
+    e.status = 404;
+    throw e;
+  }
 }
 
 async function boostJob(jobId) {
+  const { rows } = await pool.query("SELECT * FROM jobs WHERE id = $1", [jobId]);
+  if (!rows.length) {
+    const e = new Error("Job not found");
+    e.status = 404;
+    throw e;
+  }
+
   const boostedUntil = new Date();
   boostedUntil.setDate(boostedUntil.getDate() + 7);
 
-  const { rows } = await query(
-    "UPDATE jobs SET boosted=true, boosted_until=$1 WHERE id=$2 RETURNING *",
+  const { rows: updateRows } = await pool.query(
+    `UPDATE jobs
+     SET boosted = true, boosted_until = $1, updated_at = NOW()
+     WHERE id = $2
+     RETURNING *`,
     [boostedUntil.toISOString(), jobId]
   );
 
@@ -205,15 +335,21 @@ async function boostJob(jobId) {
 }
 
 async function incrementShareCount(jobId) {
-  const { rows } = await query(
-    "UPDATE jobs SET share_count=COALESCE(share_count,0)+1 WHERE id=$1 RETURNING *",
+  const { rows } = await pool.query(
+    "UPDATE jobs SET share_count = COALESCE(share_count, 0) + 1, updated_at = NOW() WHERE id = $1 RETURNING *",
     [jobId]
   );
+
+  if (!rows.length) {
+    const e = new Error("Job not found");
+    e.status = 404;
+    throw e;
+  }
 
   return rowToJob(rows[0]);
 }
 
-export default {
+module.exports = {
   createJob,
   getJob,
   listJobs,

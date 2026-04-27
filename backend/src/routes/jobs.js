@@ -65,14 +65,51 @@ router.get("/", generalJobRateLimiter, async (req, res, next) => {
     const { category, status, limit, search, cursor, timezone } = req.query;
     const safeLimit = Math.max(1, Math.min(parseInt(limit, 10) || 20, 100));
 
-    const result = await listJobs({
-      category,
-      status,
-      limit: safeLimit,
-      search,
-      cursor,
-      timezone,
-    });
+// GET /api/jobs/client/:publicKey — list jobs posted by a client
+router.get("/client/:publicKey", generalJobRateLimiter, async (req, res, next) => {
+  try { res.json({ success: true, data: await listJobsByClient(req.params.publicKey) }); }
+  catch (e) { next(e); }
+});
+
+// GET /api/jobs/:id — get single job
+router.get("/:id", generalJobRateLimiter, async (req, res, next) => {
+  try { res.json({ success: true, data: await getJob(req.params.id) }); }
+  catch (e) { next(e); }
+});
+
+// POST /api/jobs — create a new job
+router.post("/", jobCreationRateLimiter, async (req, res, next) => {
+  try {
+    const job = await createJob(req.body);
+    res.status(201).json({ success: true, data: job });
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/jobs/:id/escrow — store escrow contract ID after on-chain lock
+router.patch("/:id/escrow", verifyJWT, generalJobRateLimiter, async (req, res, next) => {
+  try {
+    const { escrowContractId } = req.body;
+    const job = await updateJobEscrowId(req.params.id, escrowContractId);
+    res.json({ success: true, data: job });
+  } catch (e) { next(e); }
+});
+
+// PATCH /api/jobs/:id/boost — boost a job listing for 7 days
+router.patch("/:id/boost", verifyJWT, generalJobRateLimiter, async (req, res, next) => {
+  try {
+    const { txHash } = req.body;
+    
+    if (!txHash || typeof txHash !== "string") {
+      return res.status(400).json({ success: false, error: "Transaction hash is required" });
+    }
+
+    // TODO: Verify Stellar payment of 10 XLM to platform wallet
+    // For now, we'll just accept the txHash
+    
+    const job = await boostJob(req.params.id, txHash);
+    res.json({ success: true, data: job });
+  } catch (e) { next(e); }
+});
 
     res.json({
       success: true,
@@ -96,7 +133,28 @@ router.get("/client/:publicKey", generalJobRateLimiter, (req, res, next) => {
   }
 });
 
-// GET /api/jobs/feed.rss
+// POST /api/jobs/:id/score-proposals — score all applications using AI
+router.post("/:id/score-proposals", verifyJWT, async (req, res, next) => {
+  try {
+    const { scoreProposals } = require("../services/aiService");
+    const { getApplicationsForJob } = require("../services/applicationService");
+    
+    const job = await getJob(req.params.id);
+    if (!job) return res.status(404).json({ success: false, error: "Job not found" });
+
+    // Verify ownership
+    if (job.clientAddress !== req.user.publicKey) {
+      return res.status(403).json({ success: false, error: "Only the job client can score proposals" });
+    }
+
+    const applications = await getApplicationsForJob(req.params.id);
+    const scores = await scoreProposals(job, applications);
+
+    res.json({ success: true, data: scores });
+  } catch (e) { next(e); }
+});
+
+// GET /api/jobs/feed.rss — RSS 2.0 feed
 router.get("/feed.rss", generalJobRateLimiter, async (req, res, next) => {
   try {
     const { category } = req.query;
