@@ -4,6 +4,7 @@
 import { useRouter } from "next/router";
 import WalletConnect from "@/components/WalletConnect";
 import PostJobForm from "@/components/PostJobForm";
+import Link from "next/link";
 
 interface PostJobProps {
   publicKey: string | null;
