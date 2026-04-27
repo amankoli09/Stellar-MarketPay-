@@ -13,7 +13,11 @@ import {
   accountUrl,
   buildReleaseEscrowTransaction,
   submitSignedSorobanTransaction,
+  USDC_ISSUER,
+  USDC_SAC_ADDRESS,
+  XLM_SAC_ADDRESS,
 } from "@/lib/stellar";
+import { Asset } from "@stellar/stellar-sdk";
 import { signTransactionWithWallet } from "@/lib/wallet";
 import type { Application, Job } from "@/utils/types";
 
@@ -42,6 +46,20 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
   const [releasingEscrow, setReleasingEscrow] = useState(false);
   const [releaseSuccess, setReleaseSuccess] = useState(false);
   const [prefillData, setPrefillData] = useState<any>(null);
+  const [aiScores, setAiScores] = useState<Record<string, { score: number; reasoning: string }>>({});
+  const [scoringProposals, setScoringProposals] = useState(false);
+
+  const [releaseCurrency, setReleaseCurrency] = useState<"XLM" | "USDC">("XLM");
+  const [estimatedOutput, setEstimatedOutput] = useState<string | null>(null);
+  const [fetchingPrice, setFetchingPrice] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  const handleCopyJobLink = async () => {
+    const ok = await copyToClipboard(window.location.href);
+    if (!ok) return;
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
 
   const isClient = Boolean(publicKey && job?.clientAddress === publicKey);
   const isFreelancer = Boolean(publicKey && job?.freelancerAddress === publicKey);
@@ -100,7 +118,24 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
     setActionError(null);
 
     try {
-      const prepared = await buildReleaseEscrowTransaction(job.escrowContractId, job.id, publicKey);
+      let prepared;
+      if (releaseCurrency !== job.currency && estimatedOutput) {
+        // Issue #104: Release with conversion
+        const targetTokenAddress = releaseCurrency === "XLM" ? XLM_SAC_ADDRESS : USDC_SAC_ADDRESS;
+        // Apply 1% slippage protection (destMin = estimatedOutput * 0.99)
+        const minAmountOut = BigInt(Math.round(parseFloat(estimatedOutput) * 0.99 * (releaseCurrency === "XLM" ? 10_000_000 : 1_000_000)));
+        
+        prepared = await buildReleaseWithConversionTransaction(
+          job.escrowContractId,
+          job.id,
+          publicKey,
+          targetTokenAddress,
+          minAmountOut
+        );
+      } else {
+        prepared = await buildReleaseEscrowTransaction(job.escrowContractId, job.id, publicKey);
+      }
+
       const { signedXDR, error: signError } = await signTransactionWithWallet(prepared.toXDR());
 
       if (signError || !signedXDR) {
@@ -165,6 +200,29 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
                     Featured
                   </span>
                 )}
+                {/* Copy link button (Issue #149) */}
+                <button
+                  type="button"
+                  onClick={handleCopyJobLink}
+                  aria-label="Copy job link"
+                  className="btn-ghost inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full"
+                >
+                  {linkCopied ? (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Copied!
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 015.656 0l1.415 1.415a4 4 0 010 5.656l-3 3a4 4 0 01-5.656 0l-1.415-1.415m-2.828-2.828a4 4 0 010-5.656l3-3a4 4 0 015.656 0l1.415 1.415" />
+                      </svg>
+                      Copy link
+                    </>
+                  )}
+                </button>
               </div>
 
               <h1 className="font-display text-2xl sm:text-3xl font-bold text-amber-100 leading-snug">
@@ -285,6 +343,16 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
           </div>
         )}
 
+        {showComparison && (
+          <ProposalComparison
+            applications={selectedApps}
+            job={job}
+            publicKey={publicKey}
+            onClose={() => setShowComparison(false)}
+            onAccept={handleAcceptApplication}
+          />
+        )}
+
         {!isClient && job.status === "open" && (
           <div className="mb-6">
             {!publicKey ? (
@@ -321,6 +389,8 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
                 </button>
               </div>
             )}
+
+            {actionError && <p className="mt-3 text-red-400 text-sm">{actionError}</p>}
           </div>
         )}
 
