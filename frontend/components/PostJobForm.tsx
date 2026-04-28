@@ -4,7 +4,7 @@
  * Issue #21: Integrates Soroban escrow contract into job creation flow.
  */
 import { useEffect, useState } from "react";
-import { createJob, updateJobEscrowId, deleteJob } from "@/lib/api";
+import { createJob, updateJobEscrowId, deleteJob, saveDraft, fetchDrafts } from "@/lib/api";
 import { buildCreateEscrowTransaction, submitSorobanTransaction } from "@/lib/stellar";
 import { signTransactionWithWallet } from "@/lib/wallet";
 import { JOB_CATEGORIES, SKILL_SUGGESTIONS, formatUSDEquivalent, getMonthlyEstimate } from "@/utils/format";
@@ -12,7 +12,7 @@ import { useRouter } from "next/router";
 import clsx from "clsx";
 import { useToast } from "@/components/Toast";
 import { usePriceContext } from "@/contexts/PriceContext";
-import type { Currency } from "@/utils/types";
+import type { Currency, Job } from "@/utils/types";
 
 interface PostJobFormProps { publicKey: string; }
 
@@ -26,6 +26,7 @@ type FormState = {
   deadline: string;
   currency: Currency;
   timezone: string;
+  visibility: "public" | "private" | "invite_only";
 };
 
 type JobTemplate = {
@@ -40,6 +41,7 @@ type JobTemplate = {
 
 const JOB_TEMPLATES_STORAGE_KEY = "stellar-marketpay-job-templates";
 const SCOPE_PREFILL_STORAGE_KEY = "marketpay_scope_prefill";
+const REPOST_JOB_PREFILL_STORAGE_KEY = "marketpay_repost_job_prefill";
 const emptyForm: FormState = {
   title: "",
   description: "",
@@ -49,6 +51,7 @@ const emptyForm: FormState = {
   deadline: "",
   currency: "XLM" as Currency,
   timezone: "",
+  visibility: "public",
 };
 
 export default function PostJobForm({ publicKey }: PostJobFormProps) {
@@ -56,7 +59,7 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
   const toast = useToast();
   const { xlmPriceUsd } = usePriceContext();
   const [form, setForm] = useState<FormState>({
-    title: "", description: "", budget: "", category: "", skillInput: "", deadline: "", currency: "XLM" as Currency, timezone: "",
+    title: "", description: "", budget: "", category: "", skillInput: "", deadline: "", currency: "XLM" as Currency, timezone: "", visibility: "public",
   });
   const [skills, setSkills] = useState<string[]>([]);
   const [screeningQuestions, setScreeningQuestions] = useState<string[]>([""]);
@@ -71,6 +74,9 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [pendingOverwriteTemplate, setPendingOverwriteTemplate] = useState<JobTemplate | null>(null);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [showResumeDraft, setShowResumeDraft] = useState(false);
+  const [availableDrafts, setAvailableDrafts] = useState<any[]>([]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -92,6 +98,101 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
       window.localStorage.removeItem(SCOPE_PREFILL_STORAGE_KEY);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const rawRepostPrefill = window.localStorage.getItem(REPOST_JOB_PREFILL_STORAGE_KEY);
+    if (!rawRepostPrefill) return;
+
+    try {
+      const prefill = JSON.parse(rawRepostPrefill) as Partial<Job>;
+      setForm((prev) => ({
+        ...prev,
+        title: typeof prefill.title === "string" ? prefill.title : prev.title,
+        description: typeof prefill.description === "string" ? prefill.description : prev.description,
+        budget: typeof prefill.budget === "string" ? prefill.budget : prev.budget,
+        category: typeof prefill.category === "string" ? prefill.category : prev.category,
+        currency: prefill.currency === "USDC" || prefill.currency === "XLM" ? prefill.currency : prev.currency,
+        timezone: typeof prefill.timezone === "string" ? prefill.timezone : prev.timezone,
+        deadline: "",
+      }));
+
+      if (Array.isArray(prefill.skills)) {
+        setSkills(prefill.skills.filter((skill): skill is string => typeof skill === "string"));
+      }
+      if (Array.isArray(prefill.screeningQuestions)) {
+        const filteredQuestions = prefill.screeningQuestions.filter(
+          (question): question is string => typeof question === "string"
+        );
+        setScreeningQuestions(filteredQuestions.length > 0 ? filteredQuestions : [""]);
+      }
+    } catch (_) {
+      // Ignore malformed repost prefill payload
+    } finally {
+      window.localStorage.removeItem(REPOST_JOB_PREFILL_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const loadDrafts = async () => {
+      try {
+        const drafts = await fetchDrafts();
+        setAvailableDrafts(drafts);
+        if (drafts.length > 0 && !draftId) {
+          setShowResumeDraft(true);
+        }
+      } catch (_) {
+        // Silently ignore draft loading errors
+      }
+    };
+    loadDrafts();
+  }, [publicKey, draftId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !publicKey) return;
+    const autoSaveInterval = setInterval(async () => {
+      if (form.title.trim().length > 0 || form.description.trim().length > 0) {
+        try {
+          const draft = await saveDraft({
+            id: draftId,
+            title: form.title,
+            description: form.description,
+            budget: form.budget,
+            category: form.category,
+            skills: skills,
+            currency: form.currency,
+            timezone: form.timezone,
+            visibility: form.visibility,
+            screeningQuestions: screeningQuestions.filter(q => q.trim()),
+            deadline: form.deadline || null,
+          });
+          if (!draftId) setDraftId(draft.id);
+        } catch (_) {
+          // Silently ignore auto-save errors
+        }
+      }
+    }, 10000); // Auto-save every 10 seconds
+    return () => clearInterval(autoSaveInterval);
+  }, [form, skills, screeningQuestions, draftId, publicKey]);
+
+  const resumeDraft = (draft: any) => {
+    setForm((prev) => ({
+      ...prev,
+      title: draft.title || "",
+      description: draft.description || "",
+      budget: draft.budget?.toString() || "",
+      category: draft.category || "",
+      currency: draft.currency || "XLM",
+      timezone: draft.timezone || "",
+      visibility: draft.visibility || "public",
+      deadline: draft.deadline || "",
+    }));
+    setSkills(draft.skills || []);
+    setScreeningQuestions(draft.screening_questions?.length > 0 ? draft.screening_questions : [""]);
+    setDraftId(draft.id);
+    setShowResumeDraft(false);
+  };
 
   const usdPreview = formatUSDEquivalent(form.budget, xlmPriceUsd);
   const monthlyEst = getMonthlyEstimate(form.budget, xlmPriceUsd);
@@ -174,6 +275,7 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
         skills,
         deadline: form.deadline || undefined,
         timezone: form.timezone || undefined,
+        visibility: form.visibility,
         clientAddress: publicKey,
         screeningQuestions: screeningQuestions.filter(q => q.trim().length > 0),
       });
@@ -466,6 +568,19 @@ export default function PostJobForm({ publicKey }: PostJobFormProps) {
             </select>
             <p className="mt-1 text-xs text-amber-800/50">Payment currency for this job</p>
           </div>
+        </div>
+
+        <div>
+          <label className="label">Visibility</label>
+          <select
+            value={form.visibility}
+            onChange={(e) => set("visibility", e.target.value as "public" | "private" | "invite_only")}
+            className="input-field appearance-none cursor-pointer"
+          >
+            <option value="public">Public</option>
+            <option value="private">Private (only you)</option>
+            <option value="invite_only">Invite Only</option>
+          </select>
         </div>
 
         {/* Skills */}

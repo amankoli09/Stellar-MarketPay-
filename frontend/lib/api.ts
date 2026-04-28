@@ -1,5 +1,13 @@
 import axios from "axios";
-import type { Availability, Job, Application, UserProfile, Rating } from "@/utils/types";
+import type {
+  Availability,
+  Job,
+  Application,
+  UserProfile,
+  Rating,
+  ProposalTemplate,
+  PriceAlertPreference,
+} from "@/utils/types";
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000",
@@ -76,8 +84,18 @@ export async function fetchRecentlyCompletedJobs(limit = 3): Promise<Job[]> {
   return jobs;
 }
 
-export async function fetchJob(id: string) {
-  const { data } = await api.get<{ success: boolean; data: Job }>(`/api/jobs/${id}`);
+/**
+ * Fetches a single job by its identifier.
+ *
+ * @param id Job identifier.
+ * @returns The matching job record.
+ * @throws {import("axios").AxiosError} If the job is not found or the request fails.
+ * @see backend/src/routes/jobs.js
+ */
+export async function fetchJob(id: string, viewerAddress?: string) {
+  const { data } = await api.get<{ success: boolean; data: Job }>(`/api/jobs/${id}`, {
+    params: viewerAddress ? { viewerAddress } : undefined,
+  });
   return data.data;
 }
 
@@ -91,6 +109,7 @@ export async function createJob(payload: {
   timezone?: string;
   clientAddress: string;
   screeningQuestions?: string[];
+  visibility?: "public" | "private" | "invite_only";
 }) {
   const { data } = await api.post<{ success: boolean; data: Job }>("/api/jobs", payload);
   return data.data;
@@ -129,6 +148,7 @@ export async function submitApplication(payload: {
   proposal: string;
   bidAmount: string;
   currency: string;
+  screeningAnswers?: Record<string, string>;
 }) {
   const { data } = await api.post<{ success: boolean; data: Application }>(
     "/api/applications",
@@ -208,15 +228,70 @@ export async function verifyIdentity(publicKey: string, didHash: string) {
 export async function releaseEscrow(
   jobId: string,
   clientAddress: string,
-  contractTxHash?: string
+  contractTxHash?: string,
+  releaseCurrency?: "XLM" | "USDC"
 ) {
   const { data } = await api.post(`/api/escrow/${jobId}/release`, {
     clientAddress,
     ...(contractTxHash ? { contractTxHash } : {}),
+    ...(releaseCurrency ? { releaseCurrency } : {}),
   });
   return data.data;
 }
 
+export async function inviteFreelancer(jobId: string, freelancerAddress: string) {
+  const { data } = await api.post<{ success: boolean; data: any }>(`/api/jobs/${jobId}/invite`, {
+    freelancerAddress,
+  });
+  return data.data;
+}
+
+export async function fetchProposalTemplates() {
+  const { data } = await api.get<{ success: boolean; data: ProposalTemplate[] }>("/api/proposal-templates");
+  return data.data;
+}
+
+export async function createProposalTemplate(payload: { name: string; content: string }) {
+  const { data } = await api.post<{ success: boolean; data: ProposalTemplate }>("/api/proposal-templates", payload);
+  return data.data;
+}
+
+export async function updateProposalTemplate(id: string, payload: { name?: string; content?: string }) {
+  const { data } = await api.patch<{ success: boolean; data: ProposalTemplate }>(`/api/proposal-templates/${id}`, payload);
+  return data.data;
+}
+
+export async function deleteProposalTemplate(id: string) {
+  await api.delete(`/api/proposal-templates/${id}`);
+}
+
+export async function fetchPriceAlertPreference(publicKey: string) {
+  const { data } = await api.get<{ success: boolean; data: PriceAlertPreference | null }>(
+    `/api/profiles/${encodeURIComponent(publicKey)}/price-alerts`
+  );
+  return data.data;
+}
+
+export async function upsertPriceAlertPreference(publicKey: string, payload: {
+  minXlmPriceUsd?: number | null;
+  maxXlmPriceUsd?: number | null;
+  emailNotificationsEnabled?: boolean;
+  email?: string;
+}) {
+  const { data } = await api.post<{ success: boolean; data: PriceAlertPreference }>(
+    `/api/profiles/${encodeURIComponent(publicKey)}/price-alerts`,
+    payload
+  );
+  return data.data;
+}
+
+/**
+ * Stores the on-chain escrow contract ID against a job record.
+ *
+ * @param jobId Job identifier.
+ * @param escrowContractId Soroban transaction hash returned after create_escrow().
+ * @returns The updated job record.
+ */
 export async function updateJobEscrowId(jobId: string, escrowContractId: string) {
   const { data } = await api.patch<{ success: boolean; data: Job }>(
     `/api/jobs/${jobId}/escrow`,
@@ -245,5 +320,41 @@ export async function fetchRatings(publicKey: string) {
   const { data } = await api.get<{ success: boolean; data: Rating[] }>(
     `/api/ratings/${publicKey}`
   );
+  return data.data;
+}
+}
+
+// ─── Job Suggestions (Autocomplete) ─────────────────────────────────────
+
+export async function fetchJobSuggestions(query: string): Promise<{ type: 'title' | 'skill' | 'category'; value: string }[]> {
+  const { data } = await api.get<{ success: boolean; data: { type: string; value: string }[] }>("/api/jobs/suggestions", { params: { q: query } });
+  return data.data.map((item) => ({ type: item.type as 'title' | 'skill' | 'category', value: item.value }));
+}
+
+// ─── Job Drafts (Issue #219) ────────────────────────────────────────────
+
+export async function saveDraft(draftData: any) {
+  const { data } = await api.post<{ success: boolean; data: any }>("/api/jobs/drafts", draftData);
+  return data.data;
+}
+
+export async function fetchDrafts() {
+  const { data } = await api.get<{ success: boolean; data: any[] }>("/api/jobs/drafts");
+  return data.data;
+}
+
+export async function fetchDraft(draftId: string) {
+  const { data } = await api.get<{ success: boolean; data: any }>(`/api/jobs/drafts/${draftId}`);
+  return data.data;
+}
+
+export async function deleteDraft(draftId: string) {
+  await api.delete(`/api/jobs/drafts/${draftId}`);
+}
+
+// ─── Job Recommendations (Issue #221) ───────────────────────────────────
+
+export async function fetchRecommendedJobs(limit = 10) {
+  const { data } = await api.get<{ success: boolean; data: Job[] }>("/api/jobs/recommended", { params: { limit } });
   return data.data;
 }

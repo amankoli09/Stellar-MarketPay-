@@ -4,8 +4,18 @@
  */
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import WalletConnect from "@/components/WalletConnect";
-import { fetchMyJobs, fetchMyApplications } from "@/lib/api";
+import {
+  fetchMyJobs,
+  fetchMyApplications,
+  fetchProposalTemplates,
+  createProposalTemplate,
+  updateProposalTemplate,
+  deleteProposalTemplate,
+  fetchPriceAlertPreference,
+  upsertPriceAlertPreference,
+} from "@/lib/api";
 import { getXLMBalance, getUSDCBalance, streamAccountTransactions } from "@/lib/stellar";
 import { formatXLM, shortenAddress, timeAgo, statusLabel, statusClass, copyToClipboard, exportJobsToCSV, exportApplicationsToCSV } from "@/utils/format";
 import type { Job, Application } from "@/utils/types";
@@ -19,9 +29,11 @@ interface DashboardProps {
   onConnect: (pk: string) => void;
 }
 
-type Tab = "posted" | "applied" | "send" | "edit_profile";
+type Tab = "posted" | "applied" | "send" | "edit_profile" | "templates" | "price_alerts";
+const REPOST_JOB_PREFILL_STORAGE_KEY = "marketpay_repost_job_prefill";
 
 export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>("posted");
   const [myJobs, setMyJobs] = useState<Job[]>([]);
   const [myApplications, setMyApplications] = useState<Application[]>([]);
@@ -45,7 +57,34 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
   };
 
   const [processedTxs, setProcessedTxs] = useState<Set<string>>(new Set());
+  const [templates, setTemplates] = useState<{ id: string; name: string; content: string }[]>([]);
+  const [templateName, setTemplateName] = useState("");
+  const [templateContent, setTemplateContent] = useState("");
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [alertEmail, setAlertEmail] = useState("");
   const { info, success } = useToast();
+  const isRepostable = (status: Job["status"]) => status === "expired" || status === "cancelled";
+
+  const handleRepost = (job: Job) => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      REPOST_JOB_PREFILL_STORAGE_KEY,
+      JSON.stringify({
+        title: job.title,
+        description: job.description,
+        budget: job.budget,
+        category: job.category,
+        skills: job.skills,
+        currency: job.currency,
+        timezone: job.timezone || "",
+        screeningQuestions: job.screeningQuestions || [],
+      })
+    );
+    router.push("/post-job?mode=repost");
+  };
 
   useEffect(() => {
     if (!publicKey) return;
@@ -100,6 +139,39 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
       closeStream();
     };
   }, [publicKey, myJobs, myApplications, processedTxs]);
+
+  useEffect(() => {
+    if (!publicKey) return;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+    const wsUrl = apiUrl.replace(/^http/, "ws") + "/ws/realtime";
+    const ws = new WebSocket(wsUrl);
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message?.event === "job:invited" && message?.payload?.recipientAddress === publicKey) {
+          success(`You were invited to a job (${String(message.payload.jobId).slice(0, 8)}...)`);
+        }
+        if (message?.event === "price:alert" && message?.payload?.recipientAddress === publicKey) {
+          info(`XLM price alert: $${message.payload.currentPriceUsd}`);
+        }
+      } catch (_) {}
+    };
+
+    return () => ws.close();
+  }, [publicKey, info, success]);
+
+  useEffect(() => {
+    if (!publicKey) return;
+    fetchProposalTemplates().then(setTemplates).catch(() => {});
+    fetchPriceAlertPreference(publicKey).then((pref) => {
+      if (!pref) return;
+      setMinPrice(pref.min_xlm_price_usd ? String(pref.min_xlm_price_usd) : "");
+      setMaxPrice(pref.max_xlm_price_usd ? String(pref.max_xlm_price_usd) : "");
+      setEmailEnabled(Boolean(pref.email_notifications_enabled));
+      setAlertEmail(pref.email || "");
+    }).catch(() => {});
+  }, [publicKey]);
 
   if (!publicKey) {
     return (
@@ -201,7 +273,7 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
 
       {/* Tabs */}
       <div className="flex border-b border-market-500/10 mb-6 overflow-x-auto">
-        {(["posted", "applied", "send", "edit_profile"] as Tab[]).map((t) => (
+        {(["posted", "applied", "send", "edit_profile", "templates", "price_alerts"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={clsx(
               "px-6 py-3 text-sm font-medium transition-all border-b-2 -mb-px whitespace-nowrap",
@@ -210,6 +282,8 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
             {t === "posted"      ? `Jobs Posted (${myJobs.length})` :
              t === "applied"     ? `Applications (${myApplications.length})` :
              t === "send"        ? "Send Payment" :
+             t === "templates"   ? "Proposal Templates" :
+             t === "price_alerts"? "Price Alerts" :
              "Edit Profile"}
           </button>
         ))}
@@ -239,21 +313,28 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
               </button>
             </div>
             {myJobs.map((job) => (
-              <Link key={job.id} href={`/jobs/${job.id}`}>
-                <div className="card-hover flex items-center justify-between gap-4">
-                  <div className="flex-1 min-w-0">
+              <div key={job.id} className="card-hover flex items-center justify-between gap-4">
+                  <Link href={`/jobs/${job.id}`} className="flex-1 min-w-0 block">
                     <div className="flex items-center gap-2 mb-1">
                       <span className={statusClass(job.status)}>{statusLabel(job.status)}</span>
                       <span className="text-xs text-amber-800">{job.category}</span>
                     </div>
                     <p className="font-display font-semibold text-amber-100 truncate">{job.title}</p>
                     <p className="text-xs text-amber-800 mt-1">{job.applicantCount} applicant{job.applicantCount !== 1 ? "s" : ""} · {timeAgo(job.createdAt)}</p>
-                  </div>
-                  <div className="text-right flex-shrink-0">
+                  </Link>
+                  <div className="text-right flex-shrink-0 space-y-2">
                     <p className="font-mono font-semibold text-market-400">{formatXLM(job.budget)}</p>
+                    {isRepostable(job.status) && (
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs px-3 py-1.5"
+                        onClick={() => handleRepost(job)}
+                      >
+                        Repost Job
+                      </button>
+                    )}
                   </div>
-                </div>
-              </Link>
+              </div>
             ))}
           </div>
         )
@@ -300,6 +381,130 @@ export default function Dashboard({ publicKey, onConnect }: DashboardProps) {
       ) : tab === "send" ? (
         <div className="max-w-lg">
           <SendPaymentForm fromPublicKey={publicKey} />
+        </div>
+      ) : tab === "templates" ? (
+        <div className="space-y-4">
+          <div className="card space-y-3">
+            <p className="text-sm text-amber-100 font-medium">
+              Proposal Templates ({templates.length}/10)
+            </p>
+            <input
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              className="input-field"
+              placeholder="Template name"
+            />
+            <textarea
+              value={templateContent}
+              onChange={(e) => setTemplateContent(e.target.value)}
+              className="textarea-field"
+              rows={5}
+              placeholder="Template proposal content"
+            />
+            <button
+              className="btn-primary text-sm"
+              onClick={async () => {
+                if (!templateName.trim() || !templateContent.trim()) return;
+                if (editingTemplateId) {
+                  const updated = await updateProposalTemplate(editingTemplateId, {
+                    name: templateName,
+                    content: templateContent,
+                  });
+                  setTemplates((current) => current.map((item) => item.id === updated.id ? updated : item));
+                  setEditingTemplateId(null);
+                } else {
+                  const created = await createProposalTemplate({
+                    name: templateName,
+                    content: templateContent,
+                  });
+                  setTemplates((current) => [created, ...current]);
+                }
+                setTemplateName("");
+                setTemplateContent("");
+              }}
+            >
+              {editingTemplateId ? "Update Template" : "Create Template"}
+            </button>
+          </div>
+          <div className="space-y-3">
+            {templates.map((template) => (
+              <div key={template.id} className="card">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <p className="text-amber-100 font-medium">{template.name}</p>
+                  <div className="flex gap-2">
+                    <button
+                      className="btn-secondary text-xs px-3 py-1.5"
+                      onClick={() => {
+                        setEditingTemplateId(template.id);
+                        setTemplateName(template.name);
+                        setTemplateContent(template.content);
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="btn-secondary text-xs px-3 py-1.5"
+                      onClick={async () => {
+                        await deleteProposalTemplate(template.id);
+                        setTemplates((current) => current.filter((item) => item.id !== template.id));
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+                <p className="text-sm text-amber-700 whitespace-pre-wrap">{template.content}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : tab === "price_alerts" ? (
+        <div className="card space-y-4 max-w-lg">
+          <h3 className="font-display text-xl text-amber-100">XLM Price Alerts</h3>
+          <input
+            type="number"
+            value={minPrice}
+            onChange={(e) => setMinPrice(e.target.value)}
+            className="input-field"
+            placeholder="Alert if XLM drops below (USD)"
+          />
+          <input
+            type="number"
+            value={maxPrice}
+            onChange={(e) => setMaxPrice(e.target.value)}
+            className="input-field"
+            placeholder="Alert if XLM rises above (USD)"
+          />
+          <label className="flex items-center gap-2 text-sm text-amber-200">
+            <input
+              type="checkbox"
+              checked={emailEnabled}
+              onChange={(e) => setEmailEnabled(e.target.checked)}
+            />
+            Enable email notifications
+          </label>
+          {emailEnabled && (
+            <input
+              value={alertEmail}
+              onChange={(e) => setAlertEmail(e.target.value)}
+              className="input-field"
+              placeholder="Email address"
+            />
+          )}
+          <button
+            className="btn-primary text-sm"
+            onClick={async () => {
+              await upsertPriceAlertPreference(publicKey, {
+                minXlmPriceUsd: minPrice ? Number(minPrice) : null,
+                maxXlmPriceUsd: maxPrice ? Number(maxPrice) : null,
+                emailNotificationsEnabled: emailEnabled,
+                email: alertEmail,
+              });
+              success("Price alert settings saved");
+            }}
+          >
+            Save Alerts
+          </button>
         </div>
       ) : tab === "edit_profile" ? (
         <EditProfileForm publicKey={publicKey} />
