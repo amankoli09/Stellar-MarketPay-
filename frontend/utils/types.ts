@@ -3,17 +3,18 @@
  * Shared TypeScript types for Stellar MarketPay.
  */
 
-export type JobStatus = "open" | "in_progress" | "completed" | "cancelled";
+export type JobStatus = "open" | "in_progress" | "completed" | "cancelled" | "expired";
 export type UserRole  = "client" | "freelancer" | "both";
 export type Currency  = "XLM" | "USDC";
+export type JobVisibility = "public" | "private" | "invite_only";
 export type FreelancerTier = "Newcomer" | "Rising Star" | "Expert" | "Top Talent";
-export type PortfolioItemType = "github" | "live" | "stellar_tx";
 export type AvailabilityStatus = "available" | "busy" | "unavailable";
+export type PortfolioItemType = "github" | "live" | "stellar_tx";
 
 export interface PortfolioItem {
   title: string;
-  type: PortfolioItemType;
   url: string;
+  type: PortfolioItemType;
 }
 
 export interface Availability {
@@ -47,6 +48,7 @@ export interface Job {
   budget: string;        // Amount as string
   currency: Currency;   // XLM or USDC
   category: string;
+  visibility?: JobVisibility;
   skills: string[];
   status: JobStatus;
   clientAddress: string;
@@ -104,6 +106,25 @@ export interface Rating {
   stars: number;          // 1–5
   review?: string;
   createdAt: string;
+}
+
+export interface ProposalTemplate {
+  id: string;
+  freelancerAddress: string;
+  name: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PriceAlertPreference {
+  freelancer_address: string;
+  min_xlm_price_usd?: string | null;
+  max_xlm_price_usd?: string | null;
+  email_notifications_enabled: boolean;
+  email?: string | null;
+  last_min_alert_at?: string | null;
+  last_max_alert_at?: string | null;
 }
 
 export interface EscrowState {
