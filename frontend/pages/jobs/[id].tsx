@@ -11,17 +11,10 @@ import clsx from "clsx";
 import ApplicationForm from "@/components/ApplicationForm";
 import WalletConnect from "@/components/WalletConnect";
 import RatingForm from "@/components/RatingForm";
-import ShareJobModal from "@/components/ShareJobModal";
-import {
-  fetchJob,
-  fetchApplications,
-  acceptApplication,
-  releaseEscrow,
-  scoreProposals,
-  fetchProfile,
-  inviteFreelancer,
-} from "@/lib/api";
-import { formatXLM, timeAgo, formatDate, shortenAddress, statusLabel, statusClass, copyToClipboard } from "@/utils/format";
+import ProposalComparison from "@/components/ProposalComparison";
+import MessageThread from "@/components/MessageThread";
+import { fetchJob, fetchApplications, acceptApplication, releaseEscrow } from "@/lib/api";
+import { formatXLM, timeAgo, formatDate, shortenAddress, statusLabel, statusClass } from "@/utils/format";
 import {
   accountUrl,
   buildReleaseEscrowTransaction,
@@ -579,15 +572,98 @@ export default function JobDetail({ publicKey, onConnect }: JobDetailProps) {
           )}
         </div>
 
-        {isClient && applications.length > 0 && (
-          <div className="mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-display text-xl font-bold text-amber-100">
-                Applications ({applications.length})
-              </h2>
-              <div className="hidden sm:flex items-center gap-3 text-[10px] text-amber-800 font-medium uppercase tracking-wider">
-                <span className="flex items-center gap-1"><kbd className="bg-ink-900 px-1.5 py-0.5 rounded border border-market-500/20 text-market-400">↑↓</kbd> Navigate</span>
-                <span className="flex items-center gap-1"><kbd className="bg-ink-900 px-1.5 py-0.5 rounded border border-market-500/20 text-market-400">Enter</kbd> Accept</span>
+       {/* ── Message Thread (only for in-progress jobs, visible to client & freelancer) ── */}
+       {job.status === "in_progress" && publicKey && job.freelancerAddress && (
+         (job.clientAddress === publicKey || job.freelancerAddress === publicKey) && (
+           <div className="mb-6">
+             <MessageThread
+               jobId={job.id}
+               currentUserAddress={publicKey}
+               otherUserAddress={job.clientAddress === publicKey ? job.freelancerAddress! : job.clientAddress}
+             />
+           </div>
+         )
+       )}
+
+      {/* Applications (client view) */}
+      {isClient && applications.length > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-display text-xl font-bold text-amber-100">
+              Applications ({applications.length})
+            </h2>
+            <div className="hidden sm:flex items-center gap-3 text-[10px] text-amber-800 font-medium uppercase tracking-wider">
+              <span className="flex items-center gap-1"><kbd className="bg-ink-900 px-1.5 py-0.5 rounded border border-market-500/20 text-market-400">↑↓</kbd> Navigate</span>
+              <span className="flex items-center gap-1"><kbd className="bg-ink-900 px-1.5 py-0.5 rounded border border-market-500/20 text-market-400">Enter</kbd> Accept</span>
+            </div>
+          </div>
+          <div className="space-y-4">
+            {applications.map((app) => (
+              <div 
+                key={app.id} 
+                className="card focus-visible:ring-2 focus-visible:ring-market-400 focus:outline-none transition-all"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    (e.currentTarget.nextElementSibling as HTMLElement)?.focus();
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    (e.currentTarget.previousElementSibling as HTMLElement)?.focus();
+                  } else if (e.key === "Enter" && e.target === e.currentTarget) {
+                    if (app.status === "pending" && job.status === "open") {
+                      handleAcceptApplication(app.id);
+                    }
+                  }
+                }}
+              >
+                <div className="flex items-start justify-between gap-4 mb-3">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedApplications.has(app.id)}
+                      onChange={() => handleToggleSelection(app.id)}
+                      disabled={
+                        !selectedApplications.has(app.id) && selectedApplications.size >= 3
+                      }
+                      className="w-4 h-4 rounded border-market-500/30 bg-market-500/10 text-market-400 focus:ring-market-500/50 cursor-pointer"
+                    />
+                    <a href={accountUrl(app.freelancerAddress)} target="_blank" rel="noopener noreferrer"
+                      className="address-tag hover:border-market-500/40 transition-colors">
+                      {shortenAddress(app.freelancerAddress)} ↗
+                    </a>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-market-400 font-semibold text-sm">{formatXLM(app.bidAmount)}</span>
+                    <span className={clsx("text-xs px-2.5 py-1 rounded-full border",
+                      app.status === "accepted" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                      app.status === "rejected" ? "bg-red-500/10 text-red-400 border-red-500/20" :
+                      "bg-market-500/10 text-market-400 border-market-500/20"
+                    )}>{app.status}</span>
+                  </div>
+                </div>
+                <p className="text-amber-700/80 text-sm leading-relaxed mb-4">{app.proposal}</p>
+                
+                {/* Screening Answers */}
+                {app.screeningAnswers && Object.keys(app.screeningAnswers).length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-market-500/10">
+                    <h4 className="text-xs font-semibold text-amber-800 uppercase tracking-wider mb-3">Screening Question Answers</h4>
+                    <div className="space-y-3">
+                      {Object.entries(app.screeningAnswers).map(([question, answer], index) => (
+                        <div key={index}>
+                          <p className="text-xs text-amber-300 font-medium mb-1">{question}</p>
+                          <p className="text-sm text-amber-700/80 bg-market-500/5 p-2 rounded border border-market-500/10">{answer}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {app.status === "pending" && job.status === "open" && (
+                  <button onClick={() => handleAcceptApplication(app.id)} className="btn-secondary text-sm py-2 px-4 mt-4">
+                    Accept Proposal
+                  </button>
+                )}
               </div>
             </div>
 
