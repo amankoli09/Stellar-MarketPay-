@@ -615,3 +615,56 @@ export async function fetchSkillBadges(publicKey: string): Promise<SkillBadge[]>
   );
   return data.data;
 }
+
+// ─── Admin Moderation ──────────────────────────────────────────────────────────
+
+export async function fetchAdminJobReports() {
+  const { data } = await api.get<{ success: boolean; data: any[] }>("/api/admin/reports/jobs");
+  return data.data;
+}
+
+export async function fetchAdminDisputes() {
+  const { data } = await api.get<{ success: boolean; data: any[] }>("/api/admin/disputes");
+  return data.data;
+}
+
+export async function fetchAdminLogs() {
+  const { data } = await api.get<{ success: boolean; data: any[] }>("/api/admin/logs");
+  return data.data;
+}
+
+export async function fetchFrozenWallets() {
+  const { data } = await api.get<{ success: boolean; data: any[] }>("/api/admin/wallets/frozen");
+  return data.data;
+}
+
+export async function resolveDispute(jobId: string, resolution: string, releaseTo: "client" | "freelancer") {
+  const { data } = await api.patch<{ success: boolean; message: string }>(
+    `/api/admin/disputes/${jobId}/resolve`,
+    { resolution, releaseTo }
+  );
+  return data;
+}
+
+export async function adminCancelJob(jobId: string, reason: string) {
+  const { data } = await api.patch<{ success: boolean; message: string }>(
+    `/api/admin/jobs/${jobId}/cancel`,
+    { reason }
+  );
+  return data;
+}
+
+export async function freezeWallet(address: string, reason: string) {
+  const { data } = await api.post<{ success: boolean; message: string }>(
+    `/api/admin/wallets/${address}/freeze`,
+    { reason }
+  );
+  return data;
+}
+
+export async function unfreezeWallet(address: string) {
+  const { data } = await api.delete<{ success: boolean; message: string }>(
+    `/api/admin/wallets/${address}/freeze`
+  );
+  return data;
+}
