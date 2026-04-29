@@ -409,26 +409,13 @@ export async function deleteJob(jobId: string) {
   await api.delete(`/api/jobs/${jobId}`);
 }
 
-/**
- * Raises a dispute for an in-progress job.
- *
- * @param jobId Job identifier.
- * @param payload Dispute details (reason and description).
- * @returns The updated job record.
- */
-export async function raiseDispute(jobId: string, payload: { reason: string; description: string }) {
-  const { data } = await api.post<{ success: boolean; data: Job }>(`/api/jobs/${jobId}/dispute`, payload);
+export async function fetchJobAnalytics(jobId: string): Promise<import("@/utils/types").JobAnalytics> {
+  const { data } = await api.get<{ success: boolean; data: import("@/utils/types").JobAnalytics }>(`/api/jobs/${jobId}/analytics`);
   return data.data;
 }
 
-/**
- * Resolves a dispute for a job (Admin only).
- *
- * @param jobId Job identifier.
- * @returns The updated job record.
- */
-export async function resolveDispute(jobId: string) {
-  const { data } = await api.post<{ success: boolean; data: Job }>(`/api/jobs/${jobId}/resolve`);
+export async function extendJobExpiry(jobId: string): Promise<Job> {
+  const { data } = await api.patch<{ success: boolean; data: Job }>(`/api/jobs/${jobId}/extend`);
   return data.data;
 }
 
@@ -723,4 +710,169 @@ export async function getTurretsConfig() {
   }>("/api/turrets/config");
 
   return data.data;
+}
+
+// ─── Messages ──────────────────────────────────────────────────────────────────
+
+/**
+ * Fetches all messages for a specific job.
+ * Automatically marks messages as read for the current user.
+ *
+ * @param jobId Job identifier.
+ * @returns Messages sorted chronologically (oldest first).
+ * @throws {import("axios").AxiosError} If unauthorized, job not found, or request fails.
+ * @see backend/src/routes/messageRoutes.js
+ */
+export async function fetchMessages(jobId: string): Promise<Message[]> {
+  const { data } = await api.get<{ success: boolean; data: Message[] }>(`/api/messages/job/${jobId}`);
+  return data.data;
+}
+
+/**
+ * Sends a message in a job thread.
+ *
+ * Request payload shape:
+ * - `content` (string): message text (1-2000 characters).
+ *
+ * @param jobId Job identifier.
+ * @param content Message content.
+ * @returns The created message object.
+ * @throws {import("axios").AxiosError} If unauthorized, validation fails, or request fails.
+ * @see backend/src/routes/messageRoutes.js
+ */
+export async function sendMessage(jobId: string, content: string): Promise<Message> {
+  const { data } = await api.post<{ success: boolean; data: Message }>(`/api/messages/job/${jobId}`, { content });
+  return data.data;
+}
+
+// ─── Assessments ──────────────────────────────────────────────────────────────
+
+/** Fetches assessment questions and cooldown info for a skill. Requires JWT. */
+export async function fetchAssessment(skill: string): Promise<AssessmentInfo> {
+  const { data } = await api.get<{ success: boolean; data: AssessmentInfo }>(`/api/assessments/${skill}`);
+  return data.data;
+}
+
+/** Submits answers for grading. Returns score and pass/fail. Requires JWT. */
+export async function submitAssessment(skill: string, answers: Record<number, number>): Promise<AssessmentResult> {
+  const { data } = await api.post<{ success: boolean; data: AssessmentResult }>(
+    `/api/assessments/${skill}/submit`,
+    { answers }
+  );
+  return data.data;
+}
+
+// ─── Earnings (Issue #181) ────────────────────────────────────────────────────
+
+export interface EarningPayment {
+  id: string;
+  jobId: string;
+  jobTitle: string;
+  amountXlm: string;
+  releasedAt: string;
+  clientAddress: string;
+}
+
+export interface MonthlyEarning {
+  month: string;      // "YYYY-MM"
+  totalXlm: number;
+}
+
+export interface EarningsData {
+  totalXlm: string;
+  payments: EarningPayment[];
+  monthly: MonthlyEarning[];
+}
+
+export async function fetchFreelancerEarnings(publicKey: string): Promise<EarningsData> {
+  const { data } = await api.get<{ success: boolean; data: EarningsData }>(
+    `/api/profiles/${encodeURIComponent(publicKey)}/earnings`
+  );
+  return data.data;
+}
+
+/** Fetches all skill assessment results (badges) for a public profile. */
+export async function fetchSkillBadges(publicKey: string): Promise<SkillBadge[]> {
+  const { data } = await api.get<{ success: boolean; data: SkillBadge[] }>(
+    `/api/assessments/results/${encodeURIComponent(publicKey)}`
+  );
+  return data.data;
+}
+
+// ─── Dispute Evidence (Issue #223) ───────────────────────────────────────────
+
+export interface DisputeEvidence {
+  id: string;
+  uploaderAddress: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  ipfsCid: string;
+  gatewayUrl: string;
+  createdAt: string;
+}
+
+export interface DisputeDetail {
+  job: {
+    id: string;
+    title: string;
+    status: string;
+    client_address: string;
+    freelancer_address: string;
+    created_at: string;
+  };
+  evidence: DisputeEvidence[];
+}
+
+export async function fetchDisputeDetail(jobId: string): Promise<DisputeDetail> {
+  const { data } = await api.get<{ success: boolean; data: DisputeDetail }>(`/api/disputes/${jobId}`);
+  return data.data;
+}
+
+export async function uploadDisputeEvidence(jobId: string, file: File): Promise<DisputeEvidence> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const { data } = await api.post<{ success: boolean; data: DisputeEvidence }>(
+    `/api/disputes/${jobId}/evidence`,
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" }, timeout: 60000 }
+  );
+  return data.data;
+}
+
+// ─── WebAuthn / Passkeys (Issue #218) ────────────────────────────────────────
+
+export interface PasskeyCredential {
+  id: string;
+  credential_name: string;
+  created_at: string;
+}
+
+export async function fetchPasskeyRegistrationOptions(publicKey: string) {
+  const { data } = await api.post<{ success: boolean; data: any }>("/api/webauthn/register-options", { publicKey });
+  return data.data;
+}
+
+export async function verifyPasskeyRegistration(credential: any, name: string) {
+  const { data } = await api.post<{ success: boolean; message: string }>("/api/webauthn/register-verify", { credential, name });
+  return data;
+}
+
+export async function fetchPasskeyLoginOptions(publicKey: string) {
+  const { data } = await api.post<{ success: boolean; data: any }>("/api/webauthn/login-options", { publicKey });
+  return data.data;
+}
+
+export async function verifyPasskeyLogin(credential: any, publicKey: string) {
+  const { data } = await api.post<{ success: boolean; token: string }>("/api/webauthn/login-verify", { credential, publicKey });
+  return data;
+}
+
+export async function fetchPasskeyCredentials(): Promise<PasskeyCredential[]> {
+  const { data } = await api.get<{ success: boolean; data: PasskeyCredential[] }>("/api/webauthn/credentials");
+  return data.data;
+}
+
+export async function deletePasskeyCredential(id: string) {
+  await api.delete(`/api/webauthn/credentials/${id}`);
 }
