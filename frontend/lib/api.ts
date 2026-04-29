@@ -270,6 +270,11 @@ export async function verifyIdentity(publicKey: string, didHash: string) {
 
 // ─── Escrow ───────────────────────────────────────────────────────────────────
 
+export async function fetchEscrow(jobId: string) {
+  const { data } = await api.get<{ success: boolean; data: any }>(`/api/escrow/${jobId}`);
+  return data.data;
+}
+
 export async function releaseEscrow(
   jobId: string,
   clientAddress: string,
@@ -280,6 +285,14 @@ export async function releaseEscrow(
     clientAddress,
     ...(contractTxHash ? { contractTxHash } : {}),
     ...(releaseCurrency ? { releaseCurrency } : {}),
+  });
+  return data.data;
+}
+
+export async function timeoutRefund(jobId: string, clientAddress: string, contractTxHash?: string) {
+  const { data } = await api.post(`/api/escrow/${jobId}/timeout-refund`, {
+    clientAddress,
+    ...(contractTxHash ? { contractTxHash } : {}),
   });
   return data.data;
 }

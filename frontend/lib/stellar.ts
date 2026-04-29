@@ -5,7 +5,7 @@
 
 import {
   Horizon, Networks, Asset, Operation, TransactionBuilder, Transaction,
-  Contract, nativeToScVal, Address,
+  Contract, nativeToScVal, Address, scValToNative,
 } from "@stellar/stellar-sdk";
 import { SorobanRpc } from "@stellar/stellar-sdk";
 
@@ -23,7 +23,7 @@ export const NETWORK_PASSPHRASE = NETWORK === "mainnet" ? Networks.PUBLIC : Netw
 export const server = new Horizon.Server(HORIZON_URL);
 export const sorobanServer = new SorobanRpc.Server(SOROBAN_RPC_URL);
 
-export type MarketPayContractEventType = "created" | "released" | "refunded";
+export type MarketPayContractEventType = "created" | "released" | "refunded" | "timeout_refunded";
 
 export interface MarketPayContractEvent {
   type: MarketPayContractEventType;
@@ -285,8 +285,90 @@ export async function buildReleaseEscrowTransaction(
 }
 
 /**
- * Builds a prepared Soroban transaction that invokes `release_with_conversion(job_id, client, target_token, min_amount_out)` on the escrow contract.
+ * Issue #175 — Read the timeout_ledger for a job directly from the contract.
+ * Uses simulation (no transaction submission or fees).
+ * @returns timeout_ledger as a number, or null if the call fails.
  */
+export async function getEscrowTimeoutLedger(contractId: string, jobId: string): Promise<number | null> {
+  if (!CONTRACT_ID_RE.test(contractId)) return null;
+  try {
+    // Use a dummy source account for simulation
+    const account = await sorobanServer.getAccount("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF");
+    const contract = new Contract(contractId);
+    const op = contract.call("get_timeout_ledger", nativeToScVal(jobId));
+    const tx = new TransactionBuilder(account, {
+      fee: "100",
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(op)
+      .setTimeout(30)
+      .build();
+
+    const sim = await sorobanServer.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationSuccess(sim) && sim.result?.retval) {
+      const raw = scValToNative(sim.result.retval);
+      if (typeof raw === "number") return raw;
+      if (typeof raw === "bigint") return Number(raw);
+      if (typeof raw === "string") return parseInt(raw, 10);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the latest closed ledger sequence from Soroban RPC.
+ * Used for timeout countdown calculations.
+ */
+export async function getCurrentLedgerSequence(): Promise<number> {
+  try {
+    const latest = await sorobanServer.getLatestLedger();
+    return latest.sequence;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Builds a prepared Soroban transaction that invokes `timeout_refund(job_id, client)` on the escrow contract.
+ * Issue #175 — Client claims refund after freelancer inactivity timeout.
+ */
+export async function buildTimeoutRefundTransaction(
+  contractId: string,
+  jobId: string,
+  clientAddress: string
+): Promise<Transaction> {
+  if (!CONTRACT_ID_RE.test(contractId)) {
+    throw new Error("Invalid escrow contract ID. Expected a Soroban contract address (C…).");
+  }
+  if (!jobId.trim()) throw new Error("Job ID is required.");
+  if (!/^G[A-Z0-9]{55}$/.test(clientAddress)) {
+    throw new Error("Invalid client account.");
+  }
+
+  try {
+    const account = await sorobanServer.getAccount(clientAddress);
+    const contract = new Contract(contractId);
+    const op = contract.call(
+      "timeout_refund",
+      nativeToScVal(jobId),
+      Address.fromString(clientAddress).toScVal()
+    );
+
+    const built = new TransactionBuilder(account, {
+      fee: "1000000",
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(op)
+      .setTimeout(60)
+      .build();
+
+    return await sorobanServer.prepareTransaction(built);
+  } catch (err: unknown) {
+    throw new Error(friendlySorobanError(err));
+  }
+}
 export async function buildReleaseWithConversionTransaction(
   contractId: string,
   jobId: string,
@@ -432,6 +514,8 @@ export async function buildCreateEscrowTransaction({
         new Address(freelancerAddress).toScVal(),
         new Address(tokenAddress).toScVal(),
         nativeToScVal(amountUnits, { type: "i128" }),
+        nativeToScVal(null), // milestones: None
+        nativeToScVal(null), // timeout_ledgers: None (use contract default)
       )
     )
     .setTimeout(60)
@@ -513,7 +597,7 @@ export function subscribeToContractEvents(
   let attempts = 0;
   let cursor: string | undefined;
   const maxAttempts = 3;
-  const supported = new Set<MarketPayContractEventType>(["created", "released", "refunded"]);
+  const supported = new Set<MarketPayContractEventType>(["created", "released", "refunded", "timeout_refunded"]);
 
   const parseEvent = (
     event: SorobanRpc.Api.GetEventsResponse["events"][number]
@@ -522,7 +606,17 @@ export function subscribeToContractEvents(
     const attrs = value?._attributes || {};
     const topics = Array.isArray(attrs.topic) ? attrs.topic : [];
     const first = topics[0] as unknown as { _value?: string } | undefined;
-    const eventType = first?._value as MarketPayContractEventType | undefined;
+    const rawType = first?._value;
+    if (!rawType) return null;
+
+    // Map contract symbols to frontend event types
+    const typeMap: Record<string, MarketPayContractEventType> = {
+      "created": "created",
+      "released": "released",
+      "refunded": "refunded",
+      "torefnd": "timeout_refunded",
+    };
+    const eventType = typeMap[rawType];
     if (!eventType || !supported.has(eventType)) return null;
 
     let jobId: string | null = null;
