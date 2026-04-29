@@ -17,7 +17,7 @@ const nodemailer = require("nodemailer");
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpecs = require('./config/swagger');
 
-const jobRoutes = require("./routes/jobs");
+const jobRoutes       = require("./routes/jobs");
 const applicationRoutes = require("./routes/applications");
 const profileRoutes     = require("./routes/profiles");
 const escrowRoutes      = require("./routes/escrow");

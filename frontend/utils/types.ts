@@ -3,20 +3,11 @@
  * Shared TypeScript types for Stellar MarketPay.
  */
 
-export type JobStatus =
-  | "open"
-  | "in_progress"
-  | "completed"
-  | "cancelled"
-  | "expired";
-export type UserRole = "client" | "freelancer" | "both";
-export type Currency = "XLM" | "USDC";
+export type JobStatus = "open" | "in_progress" | "completed" | "cancelled" | "expired";
+export type UserRole  = "client" | "freelancer" | "both";
+export type Currency  = "XLM" | "USDC";
 export type JobVisibility = "public" | "private" | "invite_only";
-export type FreelancerTier =
-  | "Newcomer"
-  | "Rising Star"
-  | "Expert"
-  | "Top Talent";
+export type FreelancerTier = "Newcomer" | "Rising Star" | "Expert" | "Top Talent";
 export type AvailabilityStatus = "available" | "busy" | "unavailable";
 export type PortfolioItemType = "github" | "live" | "stellar_tx" | "file";
 
@@ -35,49 +26,6 @@ export interface TokenInfo {
   decimals: number;
   icon?: string;
   verified?: boolean;
-}
-
-export interface TokenBalance {
-  balance: string;
-  exists: boolean;
-  limit: string;
-}
-
-export interface ApplicationStatusCounts {
-  pending?: number;
-  accepted?: number;
-  rejected?: number;
-}
-
-export interface ApplicationPerDay {
-  day: string;
-  count: number;
-}
-
-export interface AverageBid {
-  currency: Currency;
-  avgBid: number;
-  count: number;
-}
-
-export interface JobAnalytics {
-  applicationsPerDay: ApplicationPerDay[];
-  averageBidAmount: AverageBid[];
-  skillDistribution: Record<string, number>;
-  daysToHire: number | null;
-  applicationStatusCounts: ApplicationStatusCounts;
-}
-
-export interface PortfolioItem {
-  title: string;
-  url: string;
-  type: PortfolioItemType;
-}
-
-export interface Availability {
-  status: AvailabilityStatus;
-  availableFrom?: string;
-  availableUntil?: string;
 }
 
 export interface Job {
@@ -186,4 +134,34 @@ export interface EscrowState {
   createdLedger: number;
   timeoutLedger?: number;
   timeoutAt?: string;
+}
+
+export interface PortfolioFile {
+  cid: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: string;
+}
+
+export interface TokenInfo {
+  contractId: string;
+  name: string;
+  symbol: string;
+  decimals: number;
+  logoUrl?: string;
+}
+
+export interface TokenBalance {
+  contractId: string;
+  balance: string;
+  symbol: string;
+}
+
+export interface JobAnalytics {
+  applicationsPerDay: { day: string; count: number }[];
+  averageBidAmount: { currency: string; avgBid: number; count: number }[];
+  skillDistribution: Record<string, number>;
+  applicationStatusCounts: Record<string, number>;
+  daysToHire: number | null;
 }
