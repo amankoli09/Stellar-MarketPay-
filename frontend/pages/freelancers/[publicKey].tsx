@@ -51,10 +51,9 @@ function getAvailabilityBadgeClass(status?: AvailabilityStatus | null) {
   return "bg-market-500/10 text-market-300 border-market-500/20";
 }
 
-export default function PublicFreelancerProfilePage() {
+export default function PublicFreelancerProfilePage({ publicKey }: { publicKey: string | null }) {
   const router = useRouter();
   const rawKey = typeof router.query.publicKey === "string" ? router.query.publicKey : "";
-
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [badges, setBadges] = useState<SkillBadge[]>([]);
 
@@ -94,10 +93,21 @@ export default function PublicFreelancerProfilePage() {
 
     (async () => {
       try {
-        const profile = await fetchPublicProfile(rawKey);
+        const [profile, profileStats, profileResponseTime] = await Promise.all([
+          fetchPublicProfile(rawKey),
+          fetchProfileStats(rawKey),
+          fetchResponseTime(rawKey)
+        ]);
+
         if (cancelled) return;
-        if (profile === null) setState({ status: "not_found" });
-        else setState({ status: "ok", profile });
+        
+        if (profile === null) {
+          setState({ status: "not_found" });
+        } else {
+          setState({ status: "ok", profile });
+          setStats(profileStats);
+          setResponseTime(profileResponseTime);
+        }
       } catch (error: unknown) {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : "Could not load profile.";
@@ -181,8 +191,13 @@ export default function PublicFreelancerProfilePage() {
                 <h1 className="font-display text-2xl sm:text-3xl font-bold text-amber-100 break-words">
                   {state.profile.displayName?.trim() || shortenAddress(state.profile.publicKey)}
                 </h1>
-                <div className="mt-3">
+                <div className="mt-3 flex flex-wrap gap-2">
                   <FreelancerTierBadge tier={state.profile.tier} className="text-sm" />
+                  {responseTime?.averageDays !== null && responseTime.averageDays <= 3 && (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full bg-market-500/10 text-market-400 border border-market-500/20">
+                      ⚡ Fast Responder
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs sm:text-sm text-amber-800 mt-2 font-mono break-all">
                   {state.profile.publicKey}
@@ -197,6 +212,37 @@ export default function PublicFreelancerProfilePage() {
                 >
                   View on Stellar Expert →
                 </a>
+                {isOwner && !state.profile.isKycVerified && (
+                  <button
+                    onClick={handleVerifyIdentity}
+                    disabled={verifying}
+                    className="btn-primary text-sm w-full sm:w-auto flex items-center justify-center gap-2"
+                  >
+                    {verifying ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                            fill="none"
+                          />
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                          />
+                        </svg>
+                        Verifying...
+                      </>
+                    ) : (
+                      "Verify Identity (DID)"
+                    )}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -248,6 +294,36 @@ export default function PublicFreelancerProfilePage() {
                 <p className="label mb-1">Average rating</p>
                 <p className="font-display text-2xl sm:text-3xl font-bold text-market-400">
                   {state.profile.rating?.toFixed(2) ?? "New"}
+                </p>
+              </div>
+              <div className="rounded-xl bg-ink-900/50 border border-market-500/10 p-4">
+                <p className="label mb-1">Success rate</p>
+                <p className="font-display text-2xl sm:text-3xl font-bold text-market-400">
+                  {stats ? `${stats.successRate}%` : "—"}
+                </p>
+                <p className="text-[10px] uppercase tracking-wider text-amber-800 mt-1">
+                  {stats?.acceptedApplications || 0} / {stats?.totalApplications || 0} accepted
+                </p>
+              </div>
+              <div className="rounded-xl bg-ink-900/50 border border-market-500/10 p-4">
+                <p className="label mb-1">Avg. completion</p>
+                <p className="font-display text-2xl sm:text-3xl font-bold text-market-400">
+                  {responseTime?.averageDays !== null ? `${responseTime?.averageDays}d` : "—"}
+                </p>
+                <p className="text-[10px] uppercase tracking-wider text-amber-800 mt-1">
+                  Acceptance to release
+                </p>
+              </div>
+              <div className="rounded-xl bg-ink-900/50 border border-market-500/10 p-4">
+                <p className="label mb-1">Referrals</p>
+                <p className="font-display text-2xl sm:text-3xl font-bold text-market-400">
+                  {state.profile.referralCount ?? 0}
+                </p>
+              </div>
+              <div className="rounded-xl bg-ink-900/50 border border-market-500/10 p-4">
+                <p className="label mb-1">Reputation Bonus</p>
+                <p className="font-display text-2xl sm:text-3xl font-bold text-market-400">
+                  +{state.profile.reputationPoints ?? 0}
                 </p>
               </div>
             </div>
