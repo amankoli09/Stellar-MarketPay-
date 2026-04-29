@@ -9,7 +9,7 @@ export type Currency  = "XLM" | "USDC";
 export type JobVisibility = "public" | "private" | "invite_only";
 export type FreelancerTier = "Newcomer" | "Rising Star" | "Expert" | "Top Talent";
 export type AvailabilityStatus = "available" | "busy" | "unavailable";
-export type PortfolioItemType = "link" | "image" | "pdf";
+export type PortfolioItemType = "github" | "live" | "stellar_tx";
 
 export interface PortfolioItem {
   title: string;
@@ -105,23 +105,36 @@ export interface Rating {
   createdAt: string;
 }
 
-export interface ProposalTemplate {
-  id: string;
-  freelancerAddress: string;
-  name: string;
-  content: string;
-  createdAt: string;
-  updatedAt: string;
+export interface AssessmentQuestion {
+  id: number;
+  question: string;
+  options: string[];
 }
 
-export interface PriceAlertPreference {
-  freelancer_address: string;
-  min_xlm_price_usd?: string | null;
-  max_xlm_price_usd?: string | null;
-  email_notifications_enabled: boolean;
-  email?: string | null;
-  last_min_alert_at?: string | null;
-  last_max_alert_at?: string | null;
+export interface AssessmentInfo {
+  skill: string;
+  label: string;
+  questions: AssessmentQuestion[];
+  durationSeconds: number;
+  passScore: number;
+  canRetake: boolean;
+  retakeAvailableAt: string | null;
+  lastAttempt: { score: number; passed: boolean; taken_at: string } | null;
+}
+
+export interface AssessmentResult {
+  skill: string;
+  score: number;
+  passed: boolean;
+  correct: number;
+  total: number;
+}
+
+export interface SkillBadge {
+  skill: string;
+  score: number;
+  passed: boolean;
+  taken_at: string;
 }
 
 export interface EscrowState {
@@ -164,4 +177,12 @@ export interface TokenBalance {
   contractId: string;
   balance: string;
   symbol: string;
+}
+
+export interface JobAnalytics {
+  applicationsPerDay: { day: string; count: number }[];
+  averageBidAmount: { currency: string; avgBid: number; count: number }[];
+  skillDistribution: Record<string, number>;
+  applicationStatusCounts: Record<string, number>;
+  daysToHire: number | null;
 }

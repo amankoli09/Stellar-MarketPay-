@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { Availability, Job, Application, UserProfile, Rating, ProfileStats, ResponseTimeStats } from "@/utils/types";
+import type { Availability, Job, Application, UserProfile, Rating, AssessmentInfo, AssessmentResult, SkillBadge } from "@/utils/types";
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000",
@@ -92,12 +92,9 @@ export async function fetchJob(id: string, viewerAddress?: string) {
 }
 
 export async function createJob(payload: {
-  title: string;
-  description: string;
-  budget: string;
-  category: string;
-  skills: string[];
-  deadline?: string;
+  title: string; description: string; budget: string;
+  currency?: "XLM" | "USDC";
+  category: string; skills: string[]; deadline?: string;
   timezone?: string;
   clientAddress: string;
   screeningQuestions?: string[];
@@ -319,6 +316,16 @@ export async function updateJobEscrowId(jobId: string, escrowContractId: string)
 
 export async function deleteJob(jobId: string) {
   await api.delete(`/api/jobs/${jobId}`);
+}
+
+export async function fetchJobAnalytics(jobId: string): Promise<import("@/utils/types").JobAnalytics> {
+  const { data } = await api.get<{ success: boolean; data: import("@/utils/types").JobAnalytics }>(`/api/jobs/${jobId}/analytics`);
+  return data.data;
+}
+
+export async function extendJobExpiry(jobId: string): Promise<Job> {
+  const { data } = await api.patch<{ success: boolean; data: Job }>(`/api/jobs/${jobId}/extend`);
+  return data.data;
 }
 
 // ─── Ratings ──────────────────────────────────────────────────────────────────
@@ -594,16 +601,21 @@ export async function sendMessage(jobId: string, content: string): Promise<Messa
   return data.data;
 }
 
-/**
- * Fetches the total unread message count for the authenticated user.
- *
- * @returns Number of unread messages.
- * @throws {import("axios").AxiosError} If not authenticated or request fails.
- * @see backend/src/routes/messageRoutes.js
- */
-export async function fetchUnreadCount(): Promise<number> {
-  const { data } = await api.get<{ success: boolean; data: { unreadCount: number } }>("/api/messages/unread-count");
-  return data.data.unreadCount;
+// ─── Assessments ──────────────────────────────────────────────────────────────
+
+/** Fetches assessment questions and cooldown info for a skill. Requires JWT. */
+export async function fetchAssessment(skill: string): Promise<AssessmentInfo> {
+  const { data } = await api.get<{ success: boolean; data: AssessmentInfo }>(`/api/assessments/${skill}`);
+  return data.data;
+}
+
+/** Submits answers for grading. Returns score and pass/fail. Requires JWT. */
+export async function submitAssessment(skill: string, answers: Record<number, number>): Promise<AssessmentResult> {
+  const { data } = await api.post<{ success: boolean; data: AssessmentResult }>(
+    `/api/assessments/${skill}/submit`,
+    { answers }
+  );
+  return data.data;
 }
 
 // ─── Earnings (Issue #181) ────────────────────────────────────────────────────
@@ -631,6 +643,14 @@ export interface EarningsData {
 export async function fetchFreelancerEarnings(publicKey: string): Promise<EarningsData> {
   const { data } = await api.get<{ success: boolean; data: EarningsData }>(
     `/api/profiles/${encodeURIComponent(publicKey)}/earnings`
+  );
+  return data.data;
+}
+
+/** Fetches all skill assessment results (badges) for a public profile. */
+export async function fetchSkillBadges(publicKey: string): Promise<SkillBadge[]> {
+  const { data } = await api.get<{ success: boolean; data: SkillBadge[] }>(
+    `/api/assessments/results/${encodeURIComponent(publicKey)}`
   );
   return data.data;
 }
@@ -712,4 +732,3 @@ export async function fetchPasskeyCredentials(): Promise<PasskeyCredential[]> {
 export async function deletePasskeyCredential(id: string) {
   await api.delete(`/api/webauthn/credentials/${id}`);
 }
-
