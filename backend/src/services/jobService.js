@@ -599,6 +599,37 @@ async function resolveDispute(jobId) {
   return rowToJob(rows[0]);
 }
 
+async function getRecommendedJobs(publicKey) {
+  validatePublicKey(publicKey);
+
+  const { rows: profileRows } = await query(
+    "SELECT skills FROM profiles WHERE public_key = $1",
+    [publicKey]
+  );
+
+  const freelancerSkills = (profileRows[0]?.skills || []).map(s => s.toLowerCase());
+
+  const { rows: jobRows } = await query(
+    "SELECT * FROM jobs WHERE status = 'open' ORDER BY created_at DESC",
+    []
+  );
+
+  if (freelancerSkills.length === 0) {
+    return jobRows.slice(0, 5).map(row => ({ ...rowToJob(row), matchScore: 0 }));
+  }
+
+  const scored = jobRows.map(row => {
+    const job = rowToJob(row);
+    const required = (job.skills || []).map(s => s.toLowerCase());
+    if (required.length === 0) return { ...job, matchScore: 0 };
+    const matches = required.filter(s => freelancerSkills.includes(s)).length;
+    return { ...job, matchScore: Math.round((matches / required.length) * 100) };
+  });
+
+  scored.sort((a, b) => b.matchScore - a.matchScore);
+  return scored.slice(0, 5);
+}
+
 export default {
   createJob,
   getJob,
@@ -608,6 +639,5 @@ export default {
   deleteJob,
   boostJob,
   incrementShareCount,
-  raiseDispute,
-  resolveDispute,
+  getRecommendedJobs,
 };

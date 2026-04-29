@@ -10,14 +10,14 @@ const { createRateLimiter } = require("../middleware/rateLimiter");
 const { verifyJWT } = require("../middleware/auth");
 
 const jobService = require("../services/jobService");
-const { createJob, getJob, listJobs, listJobsByClient, updateJobEscrowId, deleteJob, boostJob, incrementShareCount, raiseDispute, resolveDispute } = jobService.default || jobService;
+const { createJob, getJob, listJobs, listJobsByClient, updateJobEscrowId, deleteJob, boostJob, incrementShareCount, getRecommendedJobs } = jobService.default || jobService;
 const { verifyJWT } = require("../middleware/auth");
 const { inviteFreelancerToJob } = require("../services/jobInvitationService");
 const { logContractInteraction } = require("../services/contractAuditService");
 const jobDraftService = require("../services/jobDraftService");
 const recommendationService = require("../services/recommendationService");
 
-const jobReports = new Map();
+// Feed Helpers
 
 function escapeXml(str) {
   if (str === null || str === undefined) return "";
@@ -65,6 +65,14 @@ router.get("/", generalJobRateLimiter, async (req, res, next) => {
 router.get("/client/:publicKey", generalJobRateLimiter, async (req, res, next) => {
   try { res.json({ success: true, data: await listJobsByClient(req.params.publicKey) }); }
   catch (e) { next(e); }
+});
+
+// GET /api/jobs/recommended/:publicKey — top 5 skill-matched open jobs for a freelancer
+router.get("/recommended/:publicKey", generalJobRateLimiter, async (req, res, next) => {
+  try {
+    const jobs = await getRecommendedJobs(req.params.publicKey);
+    res.json({ success: true, data: jobs });
+  } catch (e) { next(e); }
 });
 
 // GET /api/jobs/:id — get single job

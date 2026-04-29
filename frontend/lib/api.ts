@@ -638,3 +638,12 @@ export async function fetchSkillBadges(publicKey: string): Promise<SkillBadge[]>
   );
   return data.data;
 }
+
+// ─── Recommendations ──────────────────────────────────────────────────────────
+
+export async function fetchRecommendedJobs(publicKey: string): Promise<(Job & { matchScore: number })[]> {
+  const { data } = await api.get<{ success: boolean; data: (Job & { matchScore: number })[] }>(
+    `/api/jobs/recommended/${encodeURIComponent(publicKey)}`
+  );
+  return data.data;
+}
